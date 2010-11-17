@@ -19,16 +19,23 @@ template<int TYPE_GROUP,typename ISIS_TYPE> struct genH5DataType{
 	void operator()(TypeMapper::TypeMap &map){};
 };
 
+// we not not (yet) support bool - do nothing
+template<> struct genH5DataType<g_integer,bool>{
+	void operator()(TypeMapper::TypeMap &map){};
+};
 
 // integer version - creates a fitting H5::IntType
 template<typename ISIS_TYPE> struct genH5DataType<g_integer,ISIS_TYPE>{
 	void operator()(TypeMapper::TypeMap &map){
 		H5::IntType *ins=new H5::IntType;
+
+		std::string order;
+		ins->setOrder(H5T_ORDER_LE);
+		ins->getOrder(order);
+		std::cout << "Created integer type from " << data::TypePtr<ISIS_TYPE>::staticName() <<  " << with ordering: " << order <<  std::endl;
+
 		ins->setSign(std::numeric_limits<ISIS_TYPE>::is_signed ? H5T_SGN_2:H5T_SGN_NONE);
 		ins->setSize(sizeof(ISIS_TYPE));
-		std::string order;
-		ins->getOrder(order);
-		std::cout << "Created integer type with ordering: " << order <<  std::endl;
 		map[(unsigned short)data::TypePtr<ISIS_TYPE>::staticID].reset(ins);
 	};
 };
@@ -50,6 +57,7 @@ struct TypeMapOp {
 	TypeMapper::TypeMap &m_map;
 	TypeMapOp( TypeMapper::TypeMap &map ): m_map( map ) {}
 	template<typename ISIS_TYPE> void operator()( ISIS_TYPE ) {
+		std::cout << "Creating a map for " << data::TypePtr<ISIS_TYPE>::staticName() <<  std::endl;
 		if(boost::is_arithmetic<int>::value){ // ok its a number
 			if(std::numeric_limits<ISIS_TYPE>::is_integer)
 				genH5DataType<g_integer,ISIS_TYPE>()(m_map);
