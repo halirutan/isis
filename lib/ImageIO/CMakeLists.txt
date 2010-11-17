@@ -34,6 +34,7 @@ OPTION(${CMAKE_PROJECT_NAME}_IOPLUGIN_NIFTI "Enable Nifti-IO plugin" OFF)
 OPTION(${CMAKE_PROJECT_NAME}_IOPLUGIN_NULL "Enable Null-IO plugin" ON)
 OPTION(${CMAKE_PROJECT_NAME}_IOPLUGIN_DICOM "Enable Dicom-IO plugin" OFF)
 OPTION(${CMAKE_PROJECT_NAME}_IOPLUGIN_VISTA "Enable Vista-IO plugin" OFF)
+OPTION(${CMAKE_PROJECT_NAME}_IOPLUGIN_HDF5 "Enable hdf5-IO plugin" OFF)
 OPTION(${CMAKE_PROJECT_NAME}_IOPLUGIN_GZ "Enable proxy plugin for compressed files" ON)
 
 if(${CMAKE_PROJECT_NAME}_IOPLUGIN_NIFTI)
@@ -157,6 +158,15 @@ if(${CMAKE_PROJECT_NAME}_IOPLUGIN_DICOM)
 
 	SET(TARGETS ${TARGETS} isisImageFormat_Dicom)
 endif(${CMAKE_PROJECT_NAME}_IOPLUGIN_DICOM)
+
+if(${CMAKE_PROJECT_NAME}_IOPLUGIN_HDF5)
+	find_path(INCPATH_HDF5 "H5Cpp.h")
+	find_library(LIB_Z z)
+	find_library(LIB_HDF5_CPP hdf5_cpp)
+	add_library(isisImageFormat_hdf5 SHARED imageFormat_hdf5.cpp)
+	target_link_libraries(isisImageFormat_Dicom ${LIB_Z} ${LIB_HDF5_CPP})
+	SET(TARGETS ${TARGETS} isisImageFormat_hdf5)
+endif(${CMAKE_PROJECT_NAME}_IOPLUGIN_HDF5)
 
 MESSAGE(STATUS "Installing following plugins to ${ISIS_PLUGIN_DIR}")
 
