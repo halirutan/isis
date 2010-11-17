@@ -37,6 +37,9 @@ OPTION(${CMAKE_PROJECT_NAME}_IOPLUGIN_VISTA "Enable Vista-IO plugin" OFF)
 OPTION(${CMAKE_PROJECT_NAME}_IOPLUGIN_HDF5 "Enable hdf5-IO plugin" OFF)
 OPTION(${CMAKE_PROJECT_NAME}_IOPLUGIN_GZ "Enable proxy plugin for compressed files" ON)
 
+####################################################################################################
+# nifti
+####################################################################################################
 if(${CMAKE_PROJECT_NAME}_IOPLUGIN_NIFTI)
 	find_library(LIB_NIFTIIO niftiio)
 	find_library(LIB_ZNZ znz)
@@ -50,6 +53,9 @@ if(${CMAKE_PROJECT_NAME}_IOPLUGIN_NIFTI)
 	SET(TARGETS ${TARGETS} isisImageFormat_Nifti)
 endif(${CMAKE_PROJECT_NAME}_IOPLUGIN_NIFTI)
 
+####################################################################################################
+# vista
+####################################################################################################
 if(${CMAKE_PROJECT_NAME}_IOPLUGIN_VISTA)
     # This code snipped was taken from the lipsia source package.
 
@@ -129,6 +135,9 @@ if(${CMAKE_PROJECT_NAME}_IOPLUGIN_NULL)
 	SET(TARGETS ${TARGETS} isisImageFormat_Null)
 endif(${CMAKE_PROJECT_NAME}_IOPLUGIN_NULL)
 
+####################################################################################################
+# gzip proxy
+####################################################################################################
 if(${CMAKE_PROJECT_NAME}_IOPLUGIN_GZ)
 	FIND_LIBRARY(LIB_Z "z")
 	FIND_PATH(INCPATH_GZIP "zlib.h")
@@ -141,6 +150,9 @@ if(${CMAKE_PROJECT_NAME}_IOPLUGIN_GZ)
 endif(${CMAKE_PROJECT_NAME}_IOPLUGIN_GZ)
 
 
+####################################################################################################
+# dicom
+####################################################################################################
 if(${CMAKE_PROJECT_NAME}_IOPLUGIN_DICOM)
 	find_library(LIB_DCMIMGLE dcmimgle)
 	find_library(LIB_DCMIMAGE dcmimage)
@@ -159,14 +171,22 @@ if(${CMAKE_PROJECT_NAME}_IOPLUGIN_DICOM)
 	SET(TARGETS ${TARGETS} isisImageFormat_Dicom)
 endif(${CMAKE_PROJECT_NAME}_IOPLUGIN_DICOM)
 
+####################################################################################################
+# hdf5
+####################################################################################################
 if(${CMAKE_PROJECT_NAME}_IOPLUGIN_HDF5)
 	find_path(INCPATH_HDF5 "H5Cpp.h")
 	find_library(LIB_Z z)
 	find_library(LIB_HDF5_CPP hdf5_cpp)
-	add_library(isisImageFormat_hdf5 SHARED imageFormat_hdf5.cpp)
-	target_link_libraries(isisImageFormat_Dicom ${LIB_Z} ${LIB_HDF5_CPP})
+	find_library(LIB_HDF5 hdf5)
+
+	add_library(isisImageFormat_hdf5 SHARED imageFormat_hdf5.cpp imageFormat_hdf5_typeMapper.cpp)
+	target_link_libraries(isisImageFormat_hdf5 ${LIB_Z} ${LIB_HDF5_CPP} ${LIB_HDF5} ${ISIS_LIB} ${ISIS_LIB_DEPENDS})
+
 	SET(TARGETS ${TARGETS} isisImageFormat_hdf5)
 endif(${CMAKE_PROJECT_NAME}_IOPLUGIN_HDF5)
+
+
 
 MESSAGE(STATUS "Installing following plugins to ${ISIS_PLUGIN_DIR}")
 
