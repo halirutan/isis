@@ -5,6 +5,10 @@
 *      Author: proeger
 */
 
+#ifdef _MSC_VER
+#define NOMINMAX 1
+#endif
+
 #define BOOST_TEST_MODULE ChunkTest
 #include <boost/test/included/unit_test.hpp>
 #include "DataStorage/chunk.hpp"
