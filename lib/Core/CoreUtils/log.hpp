@@ -19,11 +19,6 @@
 #include "singletons.hpp"
 #include <limits.h>
 
-#ifndef __PRETTY_FUNCTION__
-#define  __PRETTY_FUNCTION__ __FUNCSIG__ //SUNPRO need "-features=extensions" to enable __func__
-#endif
-
-
 /// @cond _internal
 namespace isis
 {
@@ -53,7 +48,7 @@ public:
 		getHandle() = handler;
 	}
 	static Message send( const char file[], const char object[], int line, LogLevel level ) {
-		boost::shared_ptr<util::_internal::MessageHandlerBase> &handle=getHandle();
+		boost::shared_ptr<util::_internal::MessageHandlerBase> &handle = getHandle();
 		return Message( object, MODULE::name(), file, line, level, handle );
 	}
 };

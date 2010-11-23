@@ -24,37 +24,41 @@
 #include <strings.h>
 #endif
 
-namespace isis{
-namespace util{
-namespace _internal{
+namespace isis
+{
+namespace util
+{
+namespace _internal
+{
 
-std::locale const ichar_traits::loc=std::locale("C");
+std::locale const ichar_traits::loc = std::locale( "C" );
 
-int ichar_traits::compare(const char* s1, const char* s2, size_t n)
+int ichar_traits::compare( const char *s1, const char *s2, size_t n )
 {
 #ifdef _MSC_VER
-		return lstrcmpiA(s1,s2); //@todo find some with length parameter
+	return lstrcmpiA( s1, s2 ); //@todo find some with length parameter
 #else
-		return strncasecmp(s1,s2,n);
+	return strncasecmp( s1, s2, n );
 #endif
 }
 
-bool ichar_traits::eq(const char& c1, const char& c2)
+bool ichar_traits::eq( const char &c1, const char &c2 )
 {
-	return std::tolower(c1,loc) == std::tolower(c2,loc);
+	return std::tolower( c1, loc ) == std::tolower( c2, loc );
 }
 
-bool ichar_traits::lt(const char& c1, const char& c2)
+bool ichar_traits::lt( const char &c1, const char &c2 )
 {
-	return std::tolower(c1,loc) < std::tolower(c2,loc);
+	return std::tolower( c1, loc ) < std::tolower( c2, loc );
 }
 
-const char* ichar_traits::find(const char* s, size_t n, const char& a)
+const char *ichar_traits::find( const char *s, size_t n, const char &a )
 {
-	for(size_t i=0;i<n;i++,s++){
-		if(eq(*s,a))
+	for( size_t i = 0; i < n; i++, s++ ) {
+		if( eq( *s, a ) )
 			return s;
 	}
+
 	return NULL;
 }
 
@@ -63,7 +67,8 @@ const char* ichar_traits::find(const char* s, size_t n, const char& a)
 }
 }
 
-namespace boost{
-template<> isis::util::istring lexical_cast< isis::util::istring, std::string >(const std::string& arg){return isis::util::istring(arg.begin(),arg.end());}
-template<> std::string lexical_cast< std::string, isis::util::istring >(const isis::util::istring& arg){return std::string(arg.begin(),arg.end());}
+namespace boost
+{
+template<> isis::util::istring lexical_cast< isis::util::istring, std::string >( const std::string &arg ) {return isis::util::istring( arg.begin(), arg.end() );}
+template<> std::string lexical_cast< std::string, isis::util::istring >( const isis::util::istring &arg ) {return std::string( arg.begin(), arg.end() );}
 }
