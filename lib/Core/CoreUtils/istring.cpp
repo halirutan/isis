@@ -19,6 +19,7 @@
 
 #include "istring.hpp"
 #ifdef _MSC_VER
+#include "common.hpp"
 #include <Windows.h>
 #else
 #include <strings.h>
@@ -36,7 +37,25 @@ std::locale const ichar_traits::loc = std::locale( "C" );
 int ichar_traits::compare( const char *s1, const char *s2, size_t n )
 {
 #ifdef _MSC_VER
-	return lstrcmpiA( s1, s2 ); //@todo find some with length parameter
+	// this _must_ be compare with a length - so never ever think about using lstrcmpiA
+	switch(CompareString(
+		LOCALE_INVARIANT, /*Well not exactly "C", but close enough */
+		NORM_IGNORECASE, /*a bit redundant to LOCALE_INVARIANT but may be thats a good thing*/
+		s1,n,
+		s2,n
+		)){
+	case CSTR_LESS_THAN:return -1;break;
+	case CSTR_EQUAL:return 0;break;
+	case CSTR_GREATER_THAN:return 1;break;
+	default:
+		LOG(Debug,error) << "Wtf, string compare failed ? Not good!";
+		break;
+	}
+	std::stringstream buff;
+	buff << "String compare failed in " << __FILE__ << ":" << __LINE__;
+	throw(std::logic_error(buff.str()));
+	// oh my god what a mess .. :-(
+	return 0;
 #else
 	return strncasecmp( s1, s2, n );
 #endif

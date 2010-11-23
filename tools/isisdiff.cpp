@@ -121,7 +121,7 @@ int main( int argc, char *argv[] )
 					<< first.sizeToString() << "/" << second.sizeToString() << std::endl;
 			ret++;
 		} else {
-			size_t voxels = first.cmp( second );
+			isis::size_t voxels = first.cmp( second );
 
 			if ( voxels != 0 ) {
 				std::cout << voxels * 100 / first.sizeToVector().product()

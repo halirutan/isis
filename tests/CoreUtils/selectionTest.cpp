@@ -13,9 +13,9 @@ BOOST_AUTO_TEST_CASE( test_selection_init )
 {
 	util::Selection sel( "Val1,Val2,Val3" );
 	BOOST_CHECK_EQUAL( sel, "<<NOT_SET>>" );
-	BOOST_CHECK_EQUAL( sel, 0 );
+	BOOST_CHECK_EQUAL( sel, 0 ); 
 	BOOST_CHECK_EQUAL( sel.getEntries().size(), 3 );
-	BOOST_CHECK_EQUAL( sel.getEntries(), util::string2list<util::istring>( std::string( "Val1,Val2,Val3" ), ',' ) );
+	BOOST_CHECK_EQUAL( sel.getEntries(), util::string2list<util::istring>( util::istring( "Val1,Val2,Val3" ), ',' ) );
 }
 BOOST_AUTO_TEST_CASE( test_selection_set )
 {

@@ -12,10 +12,10 @@ data::Image voxelSwapZ( const boost::shared_ptr<data::Image> src, unsigned int d
 {
 	data::Image tmpImage = data::MemImage<TYPE> ( *src );
 
-	for ( size_t t = 0; t < src->sizeToVector()[3]; t++ ) {
-		for ( size_t z = 0; z < src->sizeToVector()[2]; z++ ) {
-			for ( size_t y = 0; y < src->sizeToVector()[1]; y++ ) {
-				for ( size_t x = 0; x < src->sizeToVector()[0]; x++ ) {
+	for ( isis::size_t t = 0; t < src->sizeToVector()[3]; t++ ) {
+		for ( isis::size_t z = 0; z < src->sizeToVector()[2]; z++ ) {
+			for ( isis::size_t y = 0; y < src->sizeToVector()[1]; y++ ) {
+				for ( isis::size_t x = 0; x < src->sizeToVector()[0]; x++ ) {
 					tmpImage.voxel<TYPE>( x, y, z, t ) = src->voxel<TYPE>( dim == 0 ? ( src->sizeToVector()[0] - x ) - 1 : x,
 														 dim == 1 ? ( src->sizeToVector()[1] - y ) - 1 : y,
 														 dim == 2 ? ( src->sizeToVector()[2] - z ) - 1 : z,
@@ -31,7 +31,7 @@ data::Image voxelSwapZ( const boost::shared_ptr<data::Image> src, unsigned int d
 int main( int argc, char **argv )
 {
 	ENABLE_LOG( data::Runtime, util::DefaultMsgPrint, error );
-	const size_t getBiggestVecElem( const util::fvector4 & vec );
+	const isis::size_t getBiggestVecElem( const util::fvector4 & vec );
 	std::map<std::string, unsigned int> alongMap = boost::assign::map_list_of
 			( "x", 0 ) ( "y", 1 ) ( "z", 2 ) ( "sagittal", 3 ) ( "coronal", 4 ) ( "axial", 5 );
 	data::IOApplication app( "isisswap", true, true );
@@ -86,26 +86,26 @@ int main( int argc, char **argv )
 
 		if ( app.parameters["swap"].toString() == "image" || app.parameters["swap"].toString() == "both" ) {
 			switch ( refImage->typeID() ) {
-			case data::TypePtr<u_int8_t>::staticID:
-				newImage = voxelSwapZ<u_int8_t>( refImage, dim );
+			case data::TypePtr<uint8_t>::staticID:
+				newImage = voxelSwapZ<uint8_t>( refImage, dim );
 				break;
 			case data::TypePtr<int8_t>::staticID:
 				newImage = voxelSwapZ<int8_t>( refImage, dim );
 				break;
-			case data::TypePtr<u_int16_t>::staticID:
-				newImage = voxelSwapZ<u_int16_t>( refImage, dim );
+			case data::TypePtr<uint16_t>::staticID:
+				newImage = voxelSwapZ<uint16_t>( refImage, dim );
 				break;
 			case data::TypePtr<int16_t>::staticID:
 				newImage = voxelSwapZ<int16_t>( refImage, dim );
 				break;
-			case data::TypePtr<u_int32_t>::staticID:
-				newImage = voxelSwapZ<u_int32_t>( refImage, dim );
+			case data::TypePtr<uint32_t>::staticID:
+				newImage = voxelSwapZ<uint32_t>( refImage, dim );
 				break;
 			case data::TypePtr<int32_t>::staticID:
 				newImage = voxelSwapZ<int32_t>( refImage, dim );
 				break;
-			case data::TypePtr<u_int64_t>::staticID:
-				newImage = voxelSwapZ<u_int64_t>( refImage, dim );
+			case data::TypePtr<uint64_t>::staticID:
+				newImage = voxelSwapZ<uint64_t>( refImage, dim );
 				break;
 			case data::TypePtr<int64_t>::staticID:
 				newImage = voxelSwapZ<int64_t>( refImage, dim );
@@ -136,12 +136,12 @@ int main( int argc, char **argv )
 };
 
 
-const size_t getBiggestVecElem( const util::fvector4 &vec )
+const isis::size_t getBiggestVecElem( const util::fvector4 &vec )
 {
-	size_t biggestVecElem = 0;
+	isis::size_t biggestVecElem = 0;
 	float tmpValue = 0;
 
-	for ( size_t vecElem = 0; vecElem < 4; vecElem++ ) {
+	for ( isis::size_t vecElem = 0; vecElem < 4; vecElem++ ) {
 		if ( fabs( vec[vecElem] ) > fabs( tmpValue ) ) {
 			biggestVecElem = vecElem;
 			tmpValue = vec[vecElem];

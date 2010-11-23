@@ -13,9 +13,9 @@ int main( int argc, char **argv )
 	app.parameters["tr"].setDescription( "Repetition time in s" );
 	app.init( argc, argv ); // will exit if there is a problem
 
-	if( app.parameters["tr"]->as<double>() > 0 ) {
+	if( app.parameters["tr"]->as<uint16_t>() > 0 ) {
 		BOOST_FOREACH( data::ImageList::const_reference ref, app.images ) {
-			ref->setProperty<u_int16_t>( "repetitionTime", app.parameters["tr"]->as<double>() * 1000 );
+			ref->setProperty<uint16_t>( "repetitionTime", app.parameters["tr"]->as<uint16_t>() * 1000 );
 		}
 	}
 
