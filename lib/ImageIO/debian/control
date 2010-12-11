@@ -1,8 +1,8 @@
 Source: isisio
 Section: science
 Priority: optional
-Maintainer: Thomas Proeger <thomasproeger@googlemail.com>
-Build-Depends: 
+Maintainer: Erik Tuerke <tuerk@cbs.mpg.de>
+Build-Depends: libdcmtk1-dev, libnifti1-dev, libtiff-dev
 Standards-Version: 3.8.1
 
 Package: isisio0-dicom

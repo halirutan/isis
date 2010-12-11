@@ -10,11 +10,13 @@
 //
 //
 
+#ifdef _MSC_VER
+#pragma warning(disable:4996)
+#endif
+
 #include "DataStorage/chunk.hpp"
 #include <boost/foreach.hpp>
 #include <limits>
-
-
 
 namespace isis
 {
@@ -62,8 +64,9 @@ Chunk Chunk::cloneToMem( size_t firstDim, size_t secondDim, size_t thirdDim, siz
 bool Chunk::makeOfTypeId( short unsigned int id )
 {
 	if( typeID() != id ) {
-		return makeOfTypeId( id, getScalingTo(id));
+		return makeOfTypeId( id, getScalingTo( id ) );
 	}
+
 	return true;
 }
 
@@ -169,13 +172,15 @@ void Chunk::getMinMax ( util::TypeReference &min, util::TypeReference &max ) con
 	return operator*().getMinMax( min, max );
 }
 
-scaling_pair Chunk::getScalingTo( unsigned short typeID, autoscaleOption scaleopt )const{
-	util::TypeReference min,max;
-	getMinMax(min,max);
-	return operator*().getScalingTo(typeID,*min,*max,scaleopt);
+scaling_pair Chunk::getScalingTo( unsigned short typeID, autoscaleOption scaleopt )const
+{
+	util::TypeReference min, max;
+	getMinMax( min, max );
+	return operator*().getScalingTo( typeID, *min, *max, scaleopt );
 }
-scaling_pair Chunk::getScalingTo( unsigned short typeID, const util::_internal::TypeBase &min, const util::_internal::TypeBase &max, autoscaleOption scaleopt )const{
-	return operator*().getScalingTo(typeID,min,max,scaleopt);
+scaling_pair Chunk::getScalingTo( unsigned short typeID, const util::_internal::TypeBase &min, const util::_internal::TypeBase &max, autoscaleOption scaleopt )const
+{
+	return operator*().getScalingTo( typeID, min, max, scaleopt );
 }
 
 Chunk &Chunk::operator=( const Chunk &ref )
@@ -236,8 +241,8 @@ ChunkList Chunk::autoSplice ( uint32_t acquisitionNumberStride )const
 	ChunkList ret = splice( ( dimensions )atDim ); // do low level splice - get the chunklist
 	BOOST_FOREACH( ChunkList::reference ref, ret ) { // adapt some metadata in them
 		util::fvector4 &orig = ref->propertyValue( "indexOrigin" )->cast_to<util::fvector4>();
-		uint32_t &acq = ref->propertyValue( "acquisitionNumber" )->cast_to<u_int32_t>();
-		orig = orig + indexOriginOffset * cnt;
+		uint32_t &acq = ref->propertyValue( "acquisitionNumber" )->cast_to<uint32_t>();
+		orig = orig + indexOriginOffset * ( float )cnt;
 		acq += acquisitionNumberStride * cnt; //@todo this might cause trouble if we try to insert this chunks into an image
 		cnt++;
 	}
