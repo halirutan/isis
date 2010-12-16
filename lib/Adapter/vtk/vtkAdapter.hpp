@@ -24,8 +24,8 @@
 #ifndef VTKADAPTER_HPP_
 #define VTKADAPTER_HPP_
 
-#include "DataStorage/image.hpp"
-#include "CoreUtils/log.hpp"
+#include <DataStorage/image.hpp>
+#include <CoreUtils/log.hpp>
 
 //external includes
 #include <boost/shared_ptr.hpp>
@@ -53,7 +53,7 @@ public:
 	/**
 	* Gets a std::vector of vtkSmartpointers on vtkImageData objects.
 	*/
-	static std::vector<vtkSmartPointer<vtkImageData> >makeVtkImageObject( const boost::shared_ptr<data::Image>, ScalingType& );
+	static std::vector<vtkSmartPointer<vtkImageData> >makeVtkImageObject( const boost::shared_ptr<data::Image>, ScalingType & );
 private:
 protected:
 	//should not be loaded directly

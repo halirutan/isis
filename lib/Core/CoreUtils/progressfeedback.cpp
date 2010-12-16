@@ -17,8 +17,8 @@
 
 */
 
-#include "CoreUtils/progressfeedback.hpp"
-#include "CoreUtils/common.hpp"
+#include "progressfeedback.hpp"
+#include "common.hpp"
 
 namespace isis
 {
@@ -48,7 +48,7 @@ size_t ConsoleFeedback::progress( const std::string message, size_t step )
 {
 	LOG_IF( !disp, Debug, error ) << "Cannot call progress on a not displayed ConsoleFeedBack.";
 	LOG_IF( !message.empty(), Debug, warning ) << "ConsoleFeedBack does ignore the message string";
-	disp->operator+=( step );
+	return disp->operator+=( step );
 }
 
 

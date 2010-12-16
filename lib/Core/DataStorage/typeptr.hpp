@@ -22,7 +22,7 @@
 
 #include "typeptr_base.hpp"
 #include "typeptr_converter.hpp"
-#include "CoreUtils/type.hpp"
+#include "../CoreUtils/type.hpp"
 #include "common.hpp"
 
 namespace isis
@@ -67,7 +67,7 @@ template<typename TYPE> class TypePtr: public _internal::TypePtrBase
 	boost::shared_ptr<TYPE> m_val;
 	template<typename T> TypePtr( const util::Type<T>& value ); // Dont do this
 protected:
-	const boost::weak_ptr<void> address()const {
+	const boost::weak_ptr<void> getRawAddress()const {
 		return boost::weak_ptr<void>( m_val );
 	}
 	TypePtrBase *clone() const {
@@ -188,7 +188,7 @@ public:
 		LOG( Debug, verbose_info ) << "Comparing " << dst.typeName() << " at " << &operator[]( 0 ) << " and " << &compare[0];
 
 		for ( size_t i = start; i < end; i++ ) {
-			if ( ! ( operator[]( i ) == compare[i] ) ){
+			if ( ! ( operator[]( i ) == compare[i] ) ) {
 				ret++;
 			}
 		}

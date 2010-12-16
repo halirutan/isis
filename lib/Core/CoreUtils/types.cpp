@@ -12,9 +12,13 @@
 
 /// @cond _hidden
 
-#include "CoreUtils/type.hpp"
-#include "DataStorage/typeptr.hpp"
-#include "CoreUtils/types.hpp"
+#ifdef _MSC_VER
+#pragma warning(disable:4800 4996)
+#endif
+
+#include "type.hpp"
+#include "../DataStorage/typeptr.hpp"
+#include "types.hpp"
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/mpl/for_each.hpp>
 #include <boost/foreach.hpp>
@@ -94,8 +98,7 @@ std::map< std::string, unsigned short > getTransposedTypeMap( bool withTypes, bo
 	typedef std::map< std::string, unsigned short> transposedMapType;
 	typedef std::map< unsigned short, std::string > mapType;
 	transposedMapType ret;
-	BOOST_FOREACH( mapType::const_reference ref, util::getTypeMap( withTypes, withTypePtrs ) )
-	{
+	BOOST_FOREACH( mapType::const_reference ref, util::getTypeMap( withTypes, withTypePtrs ) ) {
 		ret[ref.second] = ref.first;
 	}
 	return ret;

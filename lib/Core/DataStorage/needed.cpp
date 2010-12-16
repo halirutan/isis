@@ -1,5 +1,9 @@
-#include "DataStorage/chunk.hpp"
-#include "DataStorage/image.hpp"
+#ifdef _MSC_VER
+#pragma warning(disable:4996)
+#endif
+
+#include "chunk.hpp"
+#include "image.hpp"
 
 /*
  * Add needed properties for Property-objects.

@@ -13,9 +13,9 @@
 #ifndef DATA_COMMON_HPP
 #define DATA_COMMON_HPP
 
-#include "CoreUtils/log_modules.hpp"
-#include "CoreUtils/log.hpp"
-#include "CoreUtils/propmap.hpp"
+#include "../CoreUtils/log_modules.hpp"
+#include "../CoreUtils/log.hpp"
+#include "../CoreUtils/propmap.hpp"
 
 #include <boost/numeric/ublas/matrix.hpp>
 
@@ -44,7 +44,7 @@ namespace data
 
 namespace _internal
 {
-	void transformCoords(isis::util::PropMap&, boost::numeric::ublas::matrix<float>);
+void transformCoords( isis::util::PropMap &, boost::numeric::ublas::matrix<float> );
 }
 
 typedef DataLog Runtime;

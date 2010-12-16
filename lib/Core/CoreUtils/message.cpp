@@ -10,18 +10,15 @@
 //
 //
 
-#include "CoreUtils/message.hpp"
-#include "CoreUtils/common.hpp"
+#include "message.hpp"
+#include "common.hpp"
 #include <sys/types.h>
+
 #include <boost/filesystem/path.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp> //we need the to_string functions for the automatic conversion
 
 #ifndef WIN32
 #include <signal.h>
-#endif
-
-#ifndef __PRETTY_FUNCTION__
-#pragma message("Using __FUNCTION__ instead of __PRETTY_FUNCTION__ - logging will not contain full function names")
 #endif
 
 namespace isis
@@ -139,7 +136,7 @@ LogLevel MessageHandlerBase::m_stop_below = error;
 std::ostream *DefaultMsgPrint::o = &::std::cerr;
 void DefaultMsgPrint::commit( const _internal::Message &mesg )
 {
-	if(last.empty() || last !=mesg.str() ){
+	if( last.empty() || last != mesg.str() ) {
 		*o << mesg.m_module << ":" << _internal::logLevelNames( mesg.m_level );
 #ifndef NDEBUG //if with debug-info
 		*o << "[" << mesg.m_file.leaf() << ":" << mesg.m_line << "] "; //print the file and the line
@@ -148,7 +145,7 @@ void DefaultMsgPrint::commit( const _internal::Message &mesg )
 #endif //NDEBUG
 		*o << mesg.merge(); //print the message itself
 		*o << std::endl;
-		last=mesg.str();
+		last = mesg.str();
 	}
 }
 

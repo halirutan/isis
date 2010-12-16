@@ -20,7 +20,7 @@
 #ifndef TYPEPTRBASE_HPP
 #define TYPEPTRBASE_HPP
 
-#include "CoreUtils/type_base.hpp"
+#include "../CoreUtils/type_base.hpp"
 #include "typeptr_converter.hpp"
 
 namespace isis
@@ -37,7 +37,6 @@ class TypePtrBase : public util::_internal::GenericType
 protected:
 	size_t m_len;
 	TypePtrBase( size_t len = 0 );
-	virtual const boost::weak_ptr<void> address()const = 0;
 	/// Create a TypePtr of the same type pointing at the same address.
 	virtual TypePtrBase *clone()const = 0;
 public:
@@ -46,6 +45,7 @@ public:
 
 	template<typename T> bool is()const;
 
+	virtual const boost::weak_ptr<void> getRawAddress()const = 0;
 	const Converter &getConverterTo( unsigned short id )const;
 	/**
 	* Dynamically cast the TypeBase up to its actual TypePtr\<T\>. Constant version.
@@ -79,10 +79,10 @@ public:
 	bool convertTo( TypePtrBase &dst )const;
 	bool convertTo( TypePtrBase &dst, const scaling_pair &scaling )const;
 
-	///get the scaling (and offset) which would be used in an convertTo 
+	///get the scaling (and offset) which would be used in an convertTo
 	scaling_pair getScalingTo( unsigned short typeID, autoscaleOption scaleopt = autoscale )const;
 	scaling_pair getScalingTo( unsigned short typeID, const util::_internal::TypeBase &min, const util::_internal::TypeBase &max, autoscaleOption scaleopt = autoscale )const;
-	
+
 
 	/// Copy (or Convert) data from this to memory of maybe another type and the given length.
 	template<typename T> bool convertTo( T *dst, size_t len ) const {

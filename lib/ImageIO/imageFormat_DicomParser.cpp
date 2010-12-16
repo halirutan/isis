@@ -132,7 +132,7 @@ void ImageFormat_Dicom::parseDA( DcmElement *elem, const util::istring &name, ut
  * For reasons of backward compatibility with versions of this standard prior to V3.0, it is
  * recommended that implementations also support a string of characters of the format hh:mm:ss.frac for this VR.
  */
-void ImageFormat_Dicom::parseTM( DcmElement* elem, const util::istring& name, util::PropMap& map )
+void ImageFormat_Dicom::parseTM( DcmElement *elem, const util::istring &name, util::PropMap &map )
 {
 	short shift = 0;
 	OFString buff;
@@ -189,47 +189,47 @@ void ImageFormat_Dicom::parseScalar( DcmElement *elem, const util::istring &name
 	case EVR_FL: {
 		Float32 buff;
 		elem->getFloat32( buff );
-		map.setProperty<float>( name, buff); //if Float32 is float its fine, if not we will get an compiler error here
+		map.setProperty<float>( name, buff ); //if Float32 is float its fine, if not we will get an compiler error here
 	}
 	break;
 	case EVR_FD: {
 		Float64 buff;
 		elem->getFloat64( buff );
-		map.setProperty<double>( name, buff); //if Float64 is double its fine, if not we will get an compiler error here
+		map.setProperty<double>( name, buff ); //if Float64 is double its fine, if not we will get an compiler error here
 	}
 	break;
 	case EVR_DS: { //Decimal String (can be floating point)
 		elem->getOFString( buff, 0 );
-		map.setProperty<double>( name, boost::lexical_cast<double>( buff ));
+		map.setProperty<double>( name, boost::lexical_cast<double>( buff ) );
 	}
 	break;
 	case EVR_SL: { //signed long
 		Sint32 buff;
 		elem->getSint32( buff );
-		map.setProperty<int32_t>( name, buff);//seems like Sint32 is not allways int32_t, so enforce it
+		map.setProperty<int32_t>( name, buff ); //seems like Sint32 is not allways int32_t, so enforce it
 	}
 	break;
 	case EVR_SS: { //signed short
 		Sint16 buff;
 		elem->getSint16( buff );
-		map.setProperty<int16_t>( name, buff);
+		map.setProperty<int16_t>( name, buff );
 	}
 	break;
 	case EVR_UL: { //unsigned long
 		Uint32 buff;
 		elem->getUint32( buff );
-		map.setProperty<uint32_t>( name, buff);
+		map.setProperty<uint32_t>( name, buff );
 	}
 	break;
 	case EVR_US: { //unsigned short
 		Uint16 buff;
 		elem->getUint16( buff );
-		map.setProperty<uint16_t>( name, buff);
+		map.setProperty<uint16_t>( name, buff );
 	}
 	break;
 	case EVR_IS: { //integer string
 		elem->getOFString( buff, 0 );
-		map.setProperty<int32_t>( name, boost::lexical_cast<int32_t>( buff ));
+		map.setProperty<int32_t>( name, boost::lexical_cast<int32_t>( buff ) );
 	}
 	break;
 	case EVR_AE: //Application Entity (string)
@@ -242,7 +242,7 @@ void ImageFormat_Dicom::parseScalar( DcmElement *elem, const util::istring &name
 	case EVR_UI: //Unique Identifier [0-9\.]
 	case EVR_PN: { //Person Name
 		elem->getOFString( buff, 0 );
-		map.setProperty<std::string>( name, boost::lexical_cast<std::string>( buff ));
+		map.setProperty<std::string>( name, boost::lexical_cast<std::string>( buff ) );
 	}
 	break;
 	default: {
@@ -256,7 +256,7 @@ void ImageFormat_Dicom::parseScalar( DcmElement *elem, const util::istring &name
 	}
 }
 
-void ImageFormat_Dicom::parseVector( DcmElement* elem, const util::istring& name, isis::util::PropMap& map )
+void ImageFormat_Dicom::parseVector( DcmElement *elem, const util::istring &name, isis::util::PropMap &map )
 {
 	OFString buff;
 	size_t len = elem->getVM();
@@ -338,7 +338,7 @@ void ImageFormat_Dicom::parseVector( DcmElement* elem, const util::istring& name
 	LOG( Debug, verbose_info ) << "Parsed the vector " << name << " as " << map.propertyValue( name );
 }
 
-void ImageFormat_Dicom::parseList( DcmElement* elem, const util::istring& name, isis::util::PropMap& map )
+void ImageFormat_Dicom::parseList( DcmElement *elem, const util::istring &name, isis::util::PropMap &map )
 {
 	OFString buff;
 	size_t len = elem->getVM();
@@ -443,7 +443,7 @@ size_t ImageFormat_Dicom::parseCSAEntry( Uint8 *at, isis::util::PropMap &map, co
 			if ( !len )continue;
 
 			if( (
-					std::string( "MrPhoenixProtocol" ) != name  && std::string( "MrEvaProtocol" ) != name && std::string( "MrProtocol" ) != name 
+					std::string( "MrPhoenixProtocol" ) != name  && std::string( "MrEvaProtocol" ) != name && std::string( "MrProtocol" ) != name
 				) || dialect == "withExtProtocols" ) {
 				std::string insert( ( char * )at + pos );
 				const std::string whitespaces( " \t\f\v\n\r" );
@@ -490,22 +490,19 @@ size_t ImageFormat_Dicom::parseCSAEntry( Uint8 *at, isis::util::PropMap &map, co
 	return pos;
 }
 
-bool ImageFormat_Dicom::parseCSAValue( const std::string &val, const util::istring &name, const char *const vr, isis::util::PropMap &map )
+bool ImageFormat_Dicom::parseCSAValue( const std::string &val, const util::istring &name, const util::istring &vr, isis::util::PropMap &map )
 {
-	if ( strcasecmp( vr, "IS" ) == 0 or strcasecmp( vr, "SL" ) == 0 ) {
+	if ( vr == "IS" or vr == "SL" ) {
 		map.propertyValue( name ) = boost::lexical_cast<int32_t>( val );
-	} else if ( strcasecmp( vr, "UL" ) == 0 ) {
+	} else if ( vr == "UL" ) {
 		map.propertyValue( name ) = boost::lexical_cast<u_int32_t>( val );
-	} else if (
-		strcasecmp( vr, "CS" ) == 0 or
-		strcasecmp( vr, "LO" ) == 0 or strcasecmp( vr, "SH" ) == 0 or
-		strcasecmp( vr, "UN" ) == 0 or strcasecmp( vr, "ST" ) == 0 ) {
+	} else if ( vr == "CS" or vr == "LO" or vr == "SH" or vr == "UN" or vr == "ST" ) {
 		map.propertyValue( name ) = val;
-	} else if ( strcasecmp( vr, "DS" ) == 0 or strcasecmp( vr, "FD" ) == 0 ) {
+	} else if ( vr == "DS" or vr == "FD" ) {
 		map.propertyValue( name ) = boost::lexical_cast<double>( val );
-	} else if ( strcasecmp( vr, "US" ) == 0 ) {
+	} else if ( vr == "US" ) {
 		map.propertyValue( name ) = boost::lexical_cast<u_int16_t>( val );
-	} else if ( strcasecmp( vr, "SS" ) == 0 ) {
+	} else if ( vr == "SS" ) {
 		map.propertyValue( name ) = boost::lexical_cast<int16_t>( val );
 	} else {
 		LOG( Runtime, error ) << "Dont know how to parse CSA entry " << std::make_pair( name, val ) << " type is " << util::MSubject( vr );
@@ -514,16 +511,15 @@ bool ImageFormat_Dicom::parseCSAValue( const std::string &val, const util::istri
 
 	return true;
 }
-bool ImageFormat_Dicom::parseCSAValueList( const util::slist &val, const util::istring &name, const char *const vr, isis::util::PropMap &map )
+bool ImageFormat_Dicom::parseCSAValueList( const util::slist &val, const util::istring &name, const util::istring &vr, isis::util::PropMap &map )
 {
-	if ( strcasecmp( vr, "IS" ) == 0 or strcasecmp( vr, "SL" ) == 0 or
-		 strcasecmp( vr, "US" ) == 0 or strcasecmp( vr, "SS" ) == 0 ) {
+	if ( vr == "IS" or vr == "SL" or vr == "US" or vr == "SS" ) {
 		map.propertyValue( name ) = util::list2list<int32_t>( val.begin(), val.end() );
-	} else if ( strcasecmp( vr, "UL" ) == 0 ) {
+	} else if ( vr == "UL" ) {
 		map.propertyValue( name ) = val; // @todo we dont have an unsigned int list
-	} else if ( strcasecmp( vr, "LO" ) == 0 or strcasecmp( vr, "SH" ) == 0 or strcasecmp( vr, "UN" ) == 0 or strcasecmp( vr, "ST" ) == 0 or strcasecmp( vr, "SL" ) == 0 ) {
+	} else if ( vr == "LO" or vr == "SH" or vr == "UN" or vr == "ST" or vr == "SL" ) {
 		map.propertyValue( name ) = val;
-	} else if ( strcasecmp( vr, "DS" ) == 0 or strcasecmp( vr, "FD" ) == 0 ) {
+	} else if ( vr == "DS" or vr == "FD" ) {
 		map.propertyValue( name ) = util::list2list<double>( val.begin(), val.end() );
 	} else {
 		LOG( Runtime, error ) << "Dont know how to parse CSA entry " << std::make_pair( name, val ) << " type is " << util::MSubject( vr );
@@ -550,11 +546,11 @@ void ImageFormat_Dicom::dcmObject2PropMap( DcmObject *master_obj, isis::util::Pr
 
 		if ( name == "PixelData" )
 			continue;//skip the image data
-		else if ( name == "CSAImageHeaderInfo" || tag==DcmTagKey(0x0029,0x1010)) {
+		else if ( name == "CSAImageHeaderInfo" || tag == DcmTagKey( 0x0029, 0x1010 ) ) {
 			LOG( Debug, info ) << "Using " << tag.toString() << " as CSAImageHeaderInfo";
 			DcmElement *elem = dynamic_cast<DcmElement *>( obj );
 			parseCSA( elem, map.branch( "CSAImageHeaderInfo" ), dialect );
-		} else if ( name == "CSASeriesHeaderInfo" || tag==DcmTagKey(0x0029,0x1020)) {
+		} else if ( name == "CSASeriesHeaderInfo" || tag == DcmTagKey( 0x0029, 0x1020 ) ) {
 			LOG( Debug, info ) << "Using " << tag.toString() << " as CSASeriesHeaderInfo";
 			DcmElement *elem = dynamic_cast<DcmElement *>( obj );
 			parseCSA( elem, map.branch( "CSASeriesHeaderInfo" ), dialect );
