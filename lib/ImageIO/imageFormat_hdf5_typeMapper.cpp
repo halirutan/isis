@@ -14,56 +14,47 @@ namespace _internal{
 
 enum type_goups {g_integer,g_float,g_complex};
 
+//////////////////////////////////////////////////////////////////////////////////
+// get Types by their properties - hfd5 like duck-typing
+//////////////////////////////////////////////////////////////////////////////////
+
 // generic version - does nothing
-template<int TYPE_GROUP,typename ISIS_TYPE> struct genH5DataType{
-	void operator()(TypeMapper::TypeMap &map){};
+template<bool INTEGER,typename ISIS_TYPE> struct getArithType{
+	void operator()(TypeMapper::Type2hdf5Mapping &map){};
 };
 
 // we not not (yet) support bool - do nothing
-template<> struct genH5DataType<g_integer,bool>{
-	void operator()(TypeMapper::TypeMap &map){};
+template<> struct getArithType<true,bool>{
+	void operator()(TypeMapper::Type2hdf5Mapping &map){};
 };
 
-// integer version - creates a fitting H5::IntType
-template<typename ISIS_TYPE> struct genH5DataType<g_integer,ISIS_TYPE>{
-	void operator()(TypeMapper::TypeMap &map){
-		H5::IntType *ins=new H5::IntType;
+// integer version - describe it by bitsize and sign
+template<typename ISIS_TYPE> struct getArithType<true,ISIS_TYPE>{
+	void operator()(TypeMapper::Type2hdf5Mapping &map){
+		const unsigned char bitsize = sizeof(ISIS_TYPE);
+		LOG(Debug,verbose_info) << "Mapping " << util::Type<ISIS_TYPE>::staticName() << " to a " << bitsize << "bit H5::IntType";
+		(std::numeric_limits< ISIS_TYPE >::is_signed ? map.integerType.signedMap:map.integerType.unsignedMap)[bitsize]=util::Type<ISIS_TYPE>::staticID;
+	}
+};
 
-		std::string order;
-		ins->setOrder(H5T_ORDER_LE);
-		ins->getOrder(order);
-		std::cout << "Created integer type from " << data::TypePtr<ISIS_TYPE>::staticName() <<  " << with ordering: " << order <<  std::endl;
-
-		ins->setSign(std::numeric_limits<ISIS_TYPE>::is_signed ? H5T_SGN_2:H5T_SGN_NONE);
-		ins->setSize(sizeof(ISIS_TYPE));
-		map[(unsigned short)data::TypePtr<ISIS_TYPE>::staticID].reset(ins);
+// float version - describe it by bitsize 
+template<typename ISIS_TYPE> struct getArithType<false,ISIS_TYPE>{
+	void operator()(TypeMapper::Type2hdf5Mapping &map){
+		const unsigned char bitsize = sizeof(ISIS_TYPE);
+		LOG(Debug,verbose_info) << "Mapping " << util::Type<ISIS_TYPE>::staticName() << " to a " << bitsize << "bit H5::FloatType";
+		map.floatType.map[bitsize]=util::Type<ISIS_TYPE>::staticID;
 	};
 };
 
-// float version - creates a fitting H5::FloatType
-template<> struct genH5DataType<g_float,float>{
-	void operator()(TypeMapper::TypeMap &map){
-		map[(unsigned short)data::TypePtr<float>::staticID].reset(new H5::FloatType(H5::PredType::NATIVE_FLOAT));
-	};
-};
-template<> struct genH5DataType<g_float,double>{
-	void operator()(TypeMapper::TypeMap &map){
-		map[(unsigned short)data::TypePtr<double>::staticID].reset(new H5::FloatType(H5::PredType::NATIVE_DOUBLE));
-	};
-};
 
-///generate a TypeConverter for conversions from any SRC from the "types" list
+///generate a Type2hdf5Mapping-entry for conversions from any SRC from the "types" list
 struct TypeMapOp {
-	TypeMapper::TypeMap &m_map;
-	TypeMapOp( TypeMapper::TypeMap &map ): m_map( map ) {}
+	TypeMapper::Type2hdf5Mapping &m_map;
+	TypeMapOp( TypeMapper::Type2hdf5Mapping &map ): m_map( map ) {}
 	template<typename ISIS_TYPE> void operator()( ISIS_TYPE ) {
 		std::cout << "Creating a map for " << data::TypePtr<ISIS_TYPE>::staticName() <<  std::endl;
 		if(boost::is_arithmetic<int>::value){ // ok its a number
-			if(std::numeric_limits<ISIS_TYPE>::is_integer)
-				genH5DataType<g_integer,ISIS_TYPE>()(m_map);
-			else{ // to me this looks like a float
-				genH5DataType<g_float,ISIS_TYPE>()(m_map);
-			}
+			getArithType<std::numeric_limits<ISIS_TYPE>::is_integer,ISIS_TYPE>()(m_map);
 		} else {
 			// well ... big things to come
 		}
@@ -72,35 +63,56 @@ struct TypeMapOp {
 	
 TypeMapper::TypeMapper()
 {
-	boost::mpl::for_each<util::_internal::types>( TypeMapOp( types ) );
-	LOG( Debug, info ) << "mapping " << types.size() << " isis types to hdf5-types";
+	boost::mpl::for_each<util::_internal::types>( TypeMapOp( type2hfd_map ) );
 }
 
+/**
+ * Get the corresponding isis-typeID for a hdf5 type
+ * \returns Type::staticID for the type fitting the given hdf5 type, zero if no type was found.
+ */
 short unsigned int TypeMapper::hdf5Type2isisType(const H5::DataType& hdfType)
 {
-	// search the typemap for a hdf5 type which is equal to the given type
-	// H5::DataType is not less compareable so we cannot use a map here
-	BOOST_FOREACH(TypeMap::value_type &ref, types){ 
-		const H5::DataType &reftype=*(ref.second);
-		if(reftype==hdfType)
-			return ref.first;
+// @todo handle case when the given hdf5 type has a different byte order
+// 		H5T_order_t order;
+// #if __BYTE_ORDER == __LITTLE_ENDIAN
+// 		order = H5T_ORDER_LE;
+// #elif __BYTE_ORDER == __BIG_ENDIAN
+// 		order = H5T_ORDER_BE;
+// #elif __BYTE_ORDER == __PDP_ENDIAN
+// 		order = H5T_ORDER_VAX;
+// #else
+// #error "Sorry your endianess is not supported. What the heck are you comiling on ??"
+// #endif
+
+	// find a isis type which is duck-equal to the given hdf5 type
+	if(hdfType.detectClass(H5T_INTEGER)){
+		const H5::IntType &t=dynamic_cast<const H5::IntType&>(hdfType);
+		switch(t.getSign()){
+		case H5T_SGN_2:
+			return type2hfd_map.integerType.signedMap[t.getPrecision()];
+			break;
+		case H5T_SGN_NONE:
+			return type2hfd_map.integerType.unsignedMap[t.getPrecision()];
+			break;
+		}
+	} else if(hdfType.detectClass(H5T_FLOAT)){
+		const H5::FloatType &t=dynamic_cast<const H5::FloatType&>(hdfType);
+		return type2hfd_map.floatType.map[t.getPrecision()];
+	} else if(hdfType.detectClass(H5T_STRING)){
+		const H5::StrType &t=dynamic_cast<const H5::StrType&>(hdfType);
+		return type2hfd_map.strType.map[t.getCset()];
 	}
-	// no type found - lets get out of here
-	image_io::FileFormat::throwGenericError(
-		std::string("Cannot map hdf5 datatype ") + hdfType.fromClass() + " to a isis datatype"
-	); // @todo figure out how to get the "name" of a hdf5 type
-	// return something - so the compiler does not complain
-	return std::numeric_limits<unsigned short>::max();
+	return 0; // nothing found
 }
 const H5::DataType& TypeMapper::isisType2hdf5Type(short unsigned int isisType)
 {
-	TypeMap::iterator found=types.find(isisType);
+/*	TypeMap::iterator found=types.find(isisType);
 	if(found==types.end()){ // no type found - lets get out of here
 		image_io::FileFormat::throwGenericError(
 			std::string("Cannot map isis datatype ") + util::getTypeMap( false,true)[isisType] + " to a hdf5 datatype"
 		);
 	}
-	return *(found->second);
+	return *(found->second);*/
 }
 
 

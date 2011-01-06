@@ -15,8 +15,19 @@ public:
 	TypeMapper();
 	unsigned short hdf5Type2isisType(const H5::DataType &hdfType);
 	const H5::DataType & isisType2hdf5Type(unsigned short isisType);
+	struct Type2hdf5Mapping{
+		struct {
+			std::map<unsigned char,unsigned short> unsignedMap,signedMap; // precission => type
+		}integerType;
+		struct {
+			std::map<unsigned char,unsigned short> map; // precission => type
+		}floatType;
+		struct {
+			std::map<unsigned char,unsigned short> map; // charset => type (currently only H5T_CSET_ASCII)
+		}strType;
+	};
 private:
-	TypeMap types;
+	Type2hdf5Mapping type2hfd_map;
 };
 
 }}}
