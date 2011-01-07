@@ -31,8 +31,11 @@ template<> struct getArithType<true,bool>{
 // integer version - describe it by bitsize and sign
 template<typename ISIS_TYPE> struct getArithType<true,ISIS_TYPE>{
 	void operator()(TypeMapper::Type2hdf5Mapping &map){
-		const unsigned char bitsize = sizeof(ISIS_TYPE);
-		LOG(Debug,verbose_info) << "Mapping " << util::Type<ISIS_TYPE>::staticName() << " to a " << bitsize << "bit H5::IntType";
+		const unsigned char bitsize = sizeof(ISIS_TYPE)*8;
+		LOG(Debug,verbose_info)
+			<< "Mapping " << util::Type<ISIS_TYPE>::staticName() << " to a "
+			<< (std::numeric_limits< ISIS_TYPE >::is_signed ? "signed ":"unsigned ")
+			<< (int)bitsize << "bit H5::IntType";
 		(std::numeric_limits< ISIS_TYPE >::is_signed ? map.integerType.signedMap:map.integerType.unsignedMap)[bitsize]=util::Type<ISIS_TYPE>::staticID;
 	}
 };
@@ -40,24 +43,32 @@ template<typename ISIS_TYPE> struct getArithType<true,ISIS_TYPE>{
 // float version - describe it by bitsize 
 template<typename ISIS_TYPE> struct getArithType<false,ISIS_TYPE>{
 	void operator()(TypeMapper::Type2hdf5Mapping &map){
-		const unsigned char bitsize = sizeof(ISIS_TYPE);
-		LOG(Debug,verbose_info) << "Mapping " << util::Type<ISIS_TYPE>::staticName() << " to a " << bitsize << "bit H5::FloatType";
+		const unsigned char bitsize = sizeof(ISIS_TYPE)*8;
+		LOG(Debug,verbose_info) << "Mapping " << util::Type<ISIS_TYPE>::staticName() << " to a " << (int)bitsize << "bit H5::FloatType";
 		map.floatType.map[bitsize]=util::Type<ISIS_TYPE>::staticID;
 	};
 };
 
+
+template<bool IS_ARITH,typename ISIS_TYPE> struct getType{
+	void operator()(TypeMapper::Type2hdf5Mapping &map){};
+};
+template<typename ISIS_TYPE> struct getType<true,ISIS_TYPE>{
+	void operator()(TypeMapper::Type2hdf5Mapping &map){
+		getArithType<std::numeric_limits<ISIS_TYPE>::is_integer,ISIS_TYPE>()(map);
+	};
+};
+
+/////////////////////////////////////////////////////////////////////////////////////
+// in medias res
+//////////////////////////////////////////////////////////////////////////////////////
 
 ///generate a Type2hdf5Mapping-entry for conversions from any SRC from the "types" list
 struct TypeMapOp {
 	TypeMapper::Type2hdf5Mapping &m_map;
 	TypeMapOp( TypeMapper::Type2hdf5Mapping &map ): m_map( map ) {}
 	template<typename ISIS_TYPE> void operator()( ISIS_TYPE ) {
-		std::cout << "Creating a map for " << data::TypePtr<ISIS_TYPE>::staticName() <<  std::endl;
-		if(boost::is_arithmetic<int>::value){ // ok its a number
-			getArithType<std::numeric_limits<ISIS_TYPE>::is_integer,ISIS_TYPE>()(m_map);
-		} else {
-			// well ... big things to come
-		}
+		getType<boost::is_arithmetic<ISIS_TYPE>::value,ISIS_TYPE>()(m_map);
 	}
 };
 	
