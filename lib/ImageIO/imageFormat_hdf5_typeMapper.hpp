@@ -13,7 +13,7 @@ class TypeMapper{
 public:
 	typedef std::map<unsigned short,boost::shared_ptr<H5::DataType> > TypeMap;
 	TypeMapper();
-	unsigned short hdf5Type2isisType(const H5::DataType &hdfType);
+	unsigned short hdf5Type2isisType(const H5::AbstractDs &hdfType);
 	const H5::DataType & isisType2hdf5Type(unsigned short isisType);
 	struct Type2hdf5Mapping{
 		struct {

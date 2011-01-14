@@ -58,6 +58,11 @@ template<typename ISIS_TYPE> struct getType<true,ISIS_TYPE>{
 		getArithType<std::numeric_limits<ISIS_TYPE>::is_integer,ISIS_TYPE>()(map);
 	};
 };
+template<> struct getType<false,std::basic_string< char > >{
+	void operator()(TypeMapper::Type2hdf5Mapping &map){ // @todo check if this is ok on windows
+		map.strType.map[H5T_CSET_ASCII]=util::Type<std::basic_string< char > >::staticID;
+	};
+};
 
 /////////////////////////////////////////////////////////////////////////////////////
 // in medias res
@@ -81,7 +86,7 @@ TypeMapper::TypeMapper()
  * Get the corresponding isis-typeID for a hdf5 type
  * \returns Type::staticID for the type fitting the given hdf5 type, zero if no type was found.
  */
-short unsigned int TypeMapper::hdf5Type2isisType(const H5::DataType& hdfType)
+short unsigned int TypeMapper::hdf5Type2isisType(const H5::AbstractDs & ds)
 {
 // @todo handle case when the given hdf5 type has a different byte order
 // 		H5T_order_t order;
@@ -96,22 +101,27 @@ short unsigned int TypeMapper::hdf5Type2isisType(const H5::DataType& hdfType)
 // #endif
 
 	// find a isis type which is duck-equal to the given hdf5 type
-	if(hdfType.detectClass(H5T_INTEGER)){
-		const H5::IntType &t=dynamic_cast<const H5::IntType&>(hdfType);
-		switch(t.getSign()){
-		case H5T_SGN_2:
-			return type2hfd_map.integerType.signedMap[t.getPrecision()];
-			break;
-		case H5T_SGN_NONE:
-			return type2hfd_map.integerType.unsignedMap[t.getPrecision()];
-			break;
-		}
-	} else if(hdfType.detectClass(H5T_FLOAT)){
-		const H5::FloatType &t=dynamic_cast<const H5::FloatType&>(hdfType);
-		return type2hfd_map.floatType.map[t.getPrecision()];
-	} else if(hdfType.detectClass(H5T_STRING)){
-		const H5::StrType &t=dynamic_cast<const H5::StrType&>(hdfType);
-		return type2hfd_map.strType.map[t.getCset()];
+	switch(ds.getTypeClass()){
+		case H5T_INTEGER:{
+			const H5::IntType t=ds.getIntType();
+			switch(t.getSign()){
+			case H5T_SGN_2:
+				return type2hfd_map.integerType.signedMap[t.getPrecision()];
+				break;
+			case H5T_SGN_NONE:
+				return type2hfd_map.integerType.unsignedMap[t.getPrecision()];
+				break;
+			} // @todo hanle other cases
+		}break;
+		case H5T_FLOAT:{
+			const H5::FloatType t=ds.getFloatType();
+			return type2hfd_map.floatType.map[t.getPrecision()];
+		}break;
+		case H5T_STRING:{
+			const H5::StrType t=ds.getStrType();
+			const H5T_cset_t cset=t.getCset();
+			return type2hfd_map.strType.map[cset];
+		}break;
 	}
 	return 0; // nothing found
 }
