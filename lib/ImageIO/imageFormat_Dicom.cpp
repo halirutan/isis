@@ -22,8 +22,6 @@ class DicomChunk : public data::Chunk
 		void operator ()( void *at ) {
 			LOG_IF( not m_dcfile, Runtime, error )
 					<< "Trying to close non existing dicom file";
-			LOG_IF( not m_img, Runtime, error )
-					<< "Trying to close non existing dicom image";
 			LOG( Debug, verbose_info ) << "Closing mapped dicom-file " << util::MSubject( m_filename ) << " (pixeldata was at " << at << ")";
 			delete m_img;
 			delete m_dcfile;
@@ -57,13 +55,16 @@ public:
 	//the ownership of the DcmFileFormat-pointer shall be transfered to this function, because it has to decide if it should be deleted
 	static data::Chunk makeChunk( std::string filename, std::auto_ptr<DcmFileFormat> dcfile, const std::string &dialect ) {
 		std::auto_ptr<data::Chunk> ret;
-		std::auto_ptr<DicomImage> img( new DicomImage( dcfile.get(), EXS_Unknown ) );
+		DcmDataset *dcdata = dcfile->getDataset();
+		Uint16 height,width;
+		if(dcdata->findAndGetUint16(DcmTagKey(0x0028,0x0010),height).bad() || dcdata->findAndGetUint16(DcmTagKey(0x0028,0x0011),width).bad()){
+			FileFormat::throwGenericError( std::string( "Failed to get image size" ));
+		}
 
+		std::auto_ptr<DicomImage> img( new DicomImage( dcfile.get(), EXS_Unknown ) );
 		if ( img->getStatus() == EIS_Normal ) {
 			const DiPixel *const  pix = img->getInterData();
-			const unsigned long width = img->getWidth(), height = img->getHeight();
 			const void *const data = pix->getData();
-			DcmDataset *dcdata = dcfile->getDataset();
 
 			if ( pix ) {
 				if ( img->isMonochrome() ) { //try to load image directly from the raw monochrome dicom-data
@@ -111,17 +112,35 @@ public:
 						FileFormat::throwGenericError( "Unsupported datatype for color images" ); //@todo tell the user which datatype it is
 					}
 
-					if ( ret.get() ) {
-						ImageFormat_Dicom::dcmObject2PropMap( dcdata, ret->branch( ImageFormat_Dicom::dicomTagTreeName ), dialect );
-					}
 				} else {
 					FileFormat::throwGenericError( "Unsupported pixel type." );
 				}
 			} else {
 				FileFormat::throwGenericError( "Didn't get any pixel data" );
 			}
+		} else if(dcdata->tagExistsWithValue (DcmTagKey(0x7fe1,0x1010))) { // maybe its Siemens raw data
+			DcmElement *siemens_raw_data;
+			dcdata->findAndGetElement(DcmTagKey(0x7fe1,0x1010),siemens_raw_data);
+
+			Deleter del( dcfile.get(), NULL, filename );
+			switch(siemens_raw_data->getLength()/width/height){
+			case 8: // 2x32bit float
+				LOG(Runtime,info) << "Guessing siemens raw data are of type std::complex<float>";
+				Uint8 *data;
+				if(siemens_raw_data->getUint8Array(data).good()){
+					ret.reset( new DicomChunk( ( std::complex<float> * ) data, del, width, height ) );
+					dcfile.release();
+				} else {
+					LOG(Runtime,error) << "Failed to load siemens raw data";
+				}
+				break;
+			}
 		} else {
 			FileFormat::throwGenericError( std::string( "Failed to open image: " ) + DicomImage::getString( img->getStatus() )  + ")" );
+		}
+
+		if ( ret.get() ) {
+			ImageFormat_Dicom::dcmObject2PropMap( dcdata, ret->branch( ImageFormat_Dicom::dicomTagTreeName ), dialect );
 		}
 
 		return *ret;
