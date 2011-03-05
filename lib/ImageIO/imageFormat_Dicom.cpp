@@ -125,11 +125,12 @@ public:
 			Deleter del( dcfile.get(), NULL, filename );
 			switch(siemens_raw_data->getLength()/width/height){
 			case 8: // 2x32bit float
-				LOG(Runtime,info) << "Guessing siemens raw data are of type std::complex<float>";
+				LOG(Runtime,info) << "Guessing siemens raw data are of type "  << util::Value<std::complex<float> >::staticName();
 				Uint8 *data;
 				if(siemens_raw_data->getUint8Array(data).good()){
 					ret.reset( new DicomChunk( ( std::complex<float> * ) data, del, width, height ) );
 					dcfile.release();
+					ret->setPropertyAs<uint32_t>(util::istring(ImageFormat_Dicom::dicomTagTreeName)+"/InstanceNumber",0); //fake instance number
 				} else {
 					LOG(Runtime,error) << "Failed to load siemens raw data";
 				}
