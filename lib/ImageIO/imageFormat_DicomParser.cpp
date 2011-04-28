@@ -521,6 +521,8 @@ bool ImageFormat_Dicom::parseCSAValueList( const util::slist &val, const util::i
 		map.propertyValue( name ) = val;
 	} else if ( vr == "DS" or vr == "FD" ) {
 		map.propertyValue( name ) = util::listToList<double>( val.begin(), val.end() );
+	} else if ( vr == "UI" ) { //uid string
+		map.propertyValue( name ) = val;
 	} else {
 		LOG( Runtime, error ) << "Dont know how to parse CSA entry " << std::make_pair( name, val ) << " type is " << util::MSubject( vr );
 		return false;
@@ -544,7 +546,7 @@ void ImageFormat_Dicom::dcmObject2PropMap( DcmObject *master_obj, isis::util::Pr
 
 		dcmDataDict.unlock();
 
-		if ( name == "PixelData" )
+		if ( name == "PixelData" || tag == DcmTagKey( 0x7fe1, 0x1010 ) )
 			continue;//skip the image data
 		else if ( name == "CSAImageHeaderInfo" || tag == DcmTagKey( 0x0029, 0x1010 ) ) {
 			LOG( Debug, info ) << "Using " << tag.toString() << " as CSAImageHeaderInfo";

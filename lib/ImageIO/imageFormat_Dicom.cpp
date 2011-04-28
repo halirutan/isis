@@ -125,7 +125,7 @@ public:
 			Deleter del( dcfile.get(), NULL, filename );
 			switch(siemens_raw_data->getLength()/width/height){
 			case 8: // 2x32bit float
-				LOG(Runtime,info) << "Guessing siemens raw data are of type std::complex<float>";
+				LOG(Runtime,info) << "Guessing siemens raw data are of type "  << util::Value<std::complex<float> >::staticName();
 				Uint8 *data;
 				if(siemens_raw_data->getUint8Array(data).good()){
 					ret.reset( new DicomChunk( ( std::complex<float> * ) data, del, width, height ) );
@@ -274,7 +274,24 @@ void ImageFormat_Dicom::sanitise( util::PropertyMap &object, std::string /*diale
 		LOG( Runtime, warning ) << "Making up indexOrigin, because the image lacks this information";
 	}
 
-	transformOrTell<uint32_t>( prefix + "InstanceNumber", "acquisitionNumber", object, error );
+	if(object.hasProperty(prefix + "CSAImageHeaderInfo/ICE_Dims")){
+		const std::string sdims=object.getPropertyAs<std::string>(prefix + "CSAImageHeaderInfo/ICE_Dims");
+		object.remove(prefix + "CSAImageHeaderInfo/ICE_Dims");
+		object.setPropertyAs<util::slist>(prefix + "CSAImageHeaderInfo/ICE_Dims",util::stringToList<std::string>(sdims,'_'));
+	}
+
+	if( hasOrTell( prefix + "InstanceNumber", object, info ) ){
+		object.transform<uint32_t>( prefix + "InstanceNumber", "acquisitionNumber" );
+	} else if(object.hasProperty(prefix + "CSAImageHeaderInfo/ICE_Dims")) {
+		util::slist::iterator pos=object.propertyValue(prefix + "CSAImageHeaderInfo/ICE_Dims")->castTo<util::slist>().begin();
+		std::advance(pos,5);
+		object.setPropertyAs<uint32_t>("acquisitionNumber",util::Value<uint32_t>(*pos));
+		LOG(Runtime,info)
+			<< "Synthesized acquisitionNumber from " << prefix << "CSAImageHeaderInfo/ICE_Dims ("
+			<< object.propertyValue(prefix + "CSAImageHeaderInfo/ICE_Dims") << ") as " << object.propertyValue("acquisitionNumber");
+	} else {
+		LOG(Runtime,error) << "Could not determine the acquisitionNumber. The loaded Chunk will be invalid.";
+	}
 
 	if ( hasOrTell( prefix + "PatientsSex", object, warning ) ) {
 		util::Selection isisGender( "male,female,other" );
