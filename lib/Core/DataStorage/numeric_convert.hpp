@@ -45,10 +45,23 @@ template<typename SRC, typename DST> void numeric_convert_impl( const SRC *src, 
 	for ( size_t i = 0; i < count; i++ )
 		dst[i] = converter( src[i] );
 }
-template<typename SRC, typename DST> void numeric_convert_impl( const std::complex<SRC> *src, std::complex<DST> *dst, size_t count, double scale, double offset )
+template<typename SRC, typename DST> void numeric_convert_impl( const std::complex<SRC> *src, std::complex<DST> *dst, size_t count, double /*scale*/, double /*offset*/ )
 {
 	LOG( Debug, error )	<< "complex conversion with scaling is not yet supportet";
 	numeric_convert_impl( src, dst, count);
+}
+
+template<typename T> void numeric_copy_impl( const T *src, T *dst, size_t count )
+{
+	LOG( Runtime, info )    << "using memcpy-copy of " << ValuePtr<T>::staticName() << " without scaling";
+	memcpy( dst, src, count * sizeof( T ) );
+}
+template<typename T> void numeric_copy_impl( const T *src, T *dst, size_t count, double scale, double offset )
+{
+	LOG( Runtime, info )    << "using generic scaling copy of " << ValuePtr<T>::staticName() << " with scale/offset " << std::fixed << scale << "/" << offset;
+
+	for ( size_t i = 0; i < count; i++ )
+		dst[i] = src[i] * scale + offset;
 }
 
 #ifdef ISIS_USE_LIBOIL
@@ -218,10 +231,10 @@ getNumericScaling( const util::_internal::ValueBase &min, const util::_internal:
 		//else if src is completly on negative dmain, or if there is no positive domain use maxval
 		//elsewise leave it at 0 and scale both sides
 		if ( minval > 0 || !domain_min ) {
-			if ( ( maxval - domain_max ) > 0 ) // if the values completely fit into the domain we dont have to offset them
+// 			if ( ( maxval - domain_max ) > 0 ) // if the values completely fit into the domain we dont have to offset them
 				offset = -minval;
 		} else if ( ( 0 - maxval ) > 0 || !domain_max ) {
-			if ( ( domain_min - minval ) > 0  ) // if the values completely fit into the domain we dont have to offset them
+// 			if ( ( domain_min - minval ) > 0  ) // if the values completely fit into the domain we dont have to offset them
 				offset = -maxval;
 		}
 
@@ -246,8 +259,11 @@ getNumericScaling( const util::_internal::ValueBase &min, const util::_internal:
 				scale = 1;
 			}
 		}
-
-		offset *= scale;//calc offset for dst
+		if(scale==1){
+			if((minval - domain_min)>0 && (domain_max - maxval) > 0 )
+				offset=0; // if the source does fit into the domain, and we do not scale - we wont need an offset
+		} else
+			offset *= scale;//calc offset for dst
 	}
 
 	return std::make_pair( scale, offset );
@@ -287,6 +303,20 @@ template<typename SRC, typename DST> void numeric_convert( const ValuePtr<SRC> &
 		_internal::numeric_convert_impl( &src[0], &dst[0], size, scale, offset );
 	else
 		_internal::numeric_convert_impl( &src[0], &dst[0], size );
+}
+template<typename T> void numeric_copy( const ValuePtr<T> &src, ValuePtr<T> &dst, const double scale, const double offset )
+{
+	LOG_IF( src.getLength() > dst.getLength(), Runtime, error ) << "The " << src.getLength() << " elements of src wont fit into the destination. Will only convert " << dst.getLength() << " elements.";
+	LOG_IF( src.getLength() < dst.getLength(), Runtime, warning ) << "Source is shorter than destination. Will only convert " << src.getLength() << " values";
+
+	if ( src.getLength() == 0 )return;
+
+	const size_t size = std::min( src.getLength(), dst.getLength() );
+
+	if ( ( scale != 1. || offset ) )
+		_internal::numeric_copy_impl<T>( &src[0], &dst[0], size, scale, offset );
+	else
+		_internal::numeric_copy_impl<T>( &src[0], &dst[0], size );
 }
 
 }
