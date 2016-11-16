@@ -15,7 +15,6 @@
 
 #include <iostream>
 #include <fcntl.h>
-#include <unistd.h>
 #include <boost/mpl/for_each.hpp>
 #include "../util/singletons.hpp"
 
