@@ -130,6 +130,7 @@ public:
 	}
 	std::string str()const;
 	bool shouldCommit()const;
+	std::string str()const;
 };
 
 /**
