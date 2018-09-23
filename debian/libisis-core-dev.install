@@ -1,7 +1,6 @@
 debian/tmp/usr/share/isis/cmake usr/share/isis
 debian/tmp/usr/include/isis/config.hpp usr/include/isis/
-debian/tmp/usr/include/isis/util usr/include/isis/
-debian/tmp/usr/include/isis/data usr/include/isis/
+debian/tmp/usr/include/isis/core usr/include/isis/
 debian/tmp/usr/include/isis/math usr/include/isis/
 debian/tmp/usr/lib/*isis_core.so usr/lib/
 debian/tmp/usr/lib/*isis_core.a usr/lib/
