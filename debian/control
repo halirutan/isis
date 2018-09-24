@@ -5,7 +5,7 @@ Maintainer: ISIS Group <gr_isis@cbs.mpg.de>
 Uploaders: Enrico Reimer <reimer@cbs.mpg.de>, Michael Hanke <mih@debian.org>
 Build-Depends: debhelper (>= 9.0.50~), cmake, libbz2-dev,
  libmuparser-dev, qtbase5-dev, libinsighttoolkit4-dev, libace-inet-dev,
- libpng-dev, libtiff-dev, libdcmtk2-dev, 
+ libpng-dev, libtiff-dev, libdcmtk2-dev, libjsoncpp-dev,
  libboost-iostreams-dev, libboost-filesystem-dev,
  pkg-config, libfftw3-dev, help2man, liblzma-dev
 Standards-Version: 3.9.2
