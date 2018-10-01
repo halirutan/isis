@@ -68,7 +68,7 @@ public:
 	static void parseCSA( DcmElement *elem, isis::util::PropertyMap &map, std::list<util::istring> dialects );
 	static void parseScalar( DcmElement *elem, const util::PropertyMap::PropPath &name, util::PropertyMap &map );
 	static void parseList( DcmElement *elem, const util::PropertyMap::PropPath &name, isis::util::PropertyMap &map );
-	void dcmObject2PropMap( DcmObject *master_obj, isis::util::PropertyMap &map, std::list<util::istring> dialects )const;
+	DcmObject *dcmObject2PropMap( DcmObject *master_obj, isis::util::PropertyMap &map, std::list<util::istring> dialects )const;
 	static void sanitise( util::PropertyMap &object, std::list<util::istring> dialect );
 	std::string getName()const override;
 	std::list<util::istring> dialects()const override;

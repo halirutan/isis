@@ -450,15 +450,17 @@ bool ImageFormat_Dicom::parseCSAValueList( const util::slist &val, const util::P
 	return true;
 }
 
-void ImageFormat_Dicom::dcmObject2PropMap( DcmObject *master_obj, util::PropertyMap &map, std::list<util::istring> dialects )const
+DcmObject *ImageFormat_Dicom::dcmObject2PropMap( DcmObject *master_obj, util::PropertyMap &map, std::list<util::istring> dialects )const
 {
 	const std::string  old_loc=std::setlocale(LC_ALL,"C");
+	DcmObject *img=nullptr;
 	for ( DcmObject *obj = master_obj->nextInContainer( NULL ); obj; obj = master_obj->nextInContainer( obj ) ) {
 		const DcmTagKey &tag = obj->getTag();
 
-		if ( tag == DcmTagKey( 0x7fe0, 0x0010 ) )
-			continue;//skip the image data
-		else if ( tag == DcmTagKey( 0x0029, 0x1010 ) || tag == DcmTagKey( 0x0029, 0x1020 ) ) { //CSAImageHeaderInfo
+		if ( tag == DcmTagKey( 0x7fe0, 0x0010 ) ){
+			assert(!img);
+			img=obj;
+		} else if ( tag == DcmTagKey( 0x0029, 0x1010 ) || tag == DcmTagKey( 0x0029, 0x1020 ) ) { //CSAImageHeaderInfo
 			boost::optional< util::PropertyValue& > known = map.queryProperty( "Private Code for (0029,1000)-(0029,10ff)" );
 
 			if( known && known->as<std::string>() == "SIEMENS CSA HEADER" ) {
@@ -498,10 +500,13 @@ void ImageFormat_Dicom::dcmObject2PropMap( DcmObject *master_obj, util::Property
 			else
 				parseList( elem, tag2Name( tag ), map );
 		} else {
-			dcmObject2PropMap( obj, map.touchBranch( tag2Name( tag ) ), dialects );
+			DcmObject *buff=dcmObject2PropMap( obj, map.touchBranch( tag2Name( tag ) ), dialects );
+			assert(!(img && buff));
+			if(buff)img=buff;
 		}
 	}
 	std::setlocale(LC_ALL,old_loc.c_str());
+	return img;
 }
 
 }

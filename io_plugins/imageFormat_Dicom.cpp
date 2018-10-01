@@ -22,97 +22,63 @@ namespace _internal
 {
 class DicomChunk : public data::Chunk
 {
-	template<typename TYPE> DicomChunk(TYPE *dat,size_t width, size_t height ):data::Chunk( data::MemChunk<TYPE>(width, height) ) {
-		LOG( Debug, verbose_info )
-				<< "Copying greyscale pixeldata of into " << dat << " (" << data::ValueArray<TYPE>::staticName() << ")" ;
-		asValueArrayBase().copyFromMem<TYPE>(dat,width*height);
-	}
-	template<typename TYPE>
-	static data::Chunk *copyColor( TYPE **source, size_t width, size_t height ) {
-		const size_t pixels = width*height;
-		data::ValueArray<util::color<TYPE> > dest(pixels);
+	static unsigned short getPixelType(const util::PropertyMap &props){
+		auto color=props.getValueAs<std::string>("Item/PhotometricInterpretation");
+		auto bits_allocated=props.getValueAs<uint8_t>("Item/BitsAllocated");
+		auto signed_values=props.getValueAsOr<bool>("Item/PixelRepresentation",false);
 
-		for ( size_t i = 0; i < pixels; i++ ) {
-			util::color<TYPE> &dvoxel = dest[i];
-			dvoxel.r = source[0][i];
-			dvoxel.g = source[1][i];
-			dvoxel.b = source[2][i];
+		if(color=="COLOR"){
+			assert(signed_values==false);
+			switch(bits_allocated){
+				case  8:return data::ValueArray<util::color24>::staticID();break;
+				case 16:return data::ValueArray<util::color48>::staticID();break;
+				default:LOG(Runtime,error) << "Unsupportet bit-depth "<< bits_allocated << " for color image";
+			}
+		}else if(color=="MONOCHROME2"){
+			switch(bits_allocated){
+				case  8:return signed_values? data::ValueArray< int8_t>::staticID():data::ValueArray< uint8_t>::staticID();break;
+				case 16:return signed_values? data::ValueArray<int16_t>::staticID():data::ValueArray<uint16_t>::staticID();break;
+				case 32:return signed_values? data::ValueArray<int16_t>::staticID():data::ValueArray<uint32_t>::staticID();break;
+				default:LOG(Runtime,error) << "Unsupportet bit-depth "<< bits_allocated << " for greyscale image";
+			}
+		}else
+			LOG(Runtime,error) << "Unsupportet photometric interpretation " << color;
+		ImageFormat_Dicom::throwGenericError("bad pixel type");
+	}
+	static data::Chunk getPixelData(DcmElement *obj, const util::PropertyMap &props){
+		const auto vr=obj->getVR();
+// 		const auto vm=obj->getVM();
+		const DcmXfer transferSyntax(props.getValueAsOr<std::string>("Item/TransferSyntaxUID","1.2.840.10008.1.2").c_str());
+		auto rows=props.getValueAs<uint32_t>("Item/Rows");
+		auto columns=props.getValueAs<uint32_t>("Item/Columns");
+		//Number of Frames: 0028,0008
+		
+		
+// 		auto bits_stored=props.getValueAs<uint8_t>("Item/BitsStored");
+		if(transferSyntax.getXfer()==EXS_JPEG2000LosslessOnly){ //1.2.840.10008.1.2.4.90
+			LOG(Runtime,error) << "Sorry, transfer syntax " << transferSyntax.getXferName() <<  " is not yet supportet";
+			ImageFormat_Dicom::throwGenericError("Unsupported format");
 		}
-		return new data::Chunk(dest,width,height);
+		const auto length= obj->getLength(transferSyntax.getXfer());
+		Uint8 *bytes_ptr;
+		obj->getUint8Array(bytes_ptr);
+		
+		data::Chunk ret=data::Chunk::createByID(getPixelType(props),columns,rows);
+		memcpy(ret.asValueArrayBase().getRawAddress().get(),bytes_ptr,length);
+		LOG(Debug,info) << "Created " << ret.getSizeAsString() << "-Chunk of type " << ret.getTypeName();
+		return ret;
 	}
 public:
 	static data::Chunk makeChunk( const ImageFormat_Dicom &loader, DcmFileFormat &dcfile, std::list<util::istring> dialects ) {
-		std::unique_ptr<data::Chunk> ret;
-		
 		util::PropertyMap props;
-		loader.dcmObject2PropMap( &dcfile, props, dialects );
-		if(props.getValueAs<std::string>("Item/TransferSyntaxUID")=="1.2.840.10008.1.2.4.90"){
-			LOG(Runtime,error) << "Sorry, transfer syntax 1.2.840.10008.1.2.4.90 (JPEG 2K) is not yet supportet";
-			ImageFormat_Dicom::throwGenericError("Unsupported format");
-		}
-			
-		DicomImage img( &dcfile, EXS_Unknown );
-
-		if ( img.getStatus() == EIS_Normal ) {
-			const DiPixel *const  pix = img.getInterData();
-			const unsigned long width = img.getWidth(), height = img.getHeight();
-			const void *const data = pix->getData();
-			DcmDataset *dcdata = dcfile.getDataset();
-
-			if ( pix ) {
-				if ( img.isMonochrome() ) { //try to load image directly from the raw monochrome dicom-data
-					switch ( pix->getRepresentation() ) {
-					case EPR_Uint8:
-						ret.reset( new DicomChunk( ( uint8_t * ) data, width, height ) );
-						break;
-					case EPR_Sint8:
-						ret.reset( new DicomChunk( ( int8_t * )  data, width, height ) );
-						break;
-					case EPR_Uint16:
-						ret.reset( new DicomChunk( ( uint16_t * )data, width, height ) );
-						break;
-					case EPR_Sint16:
-						ret.reset( new DicomChunk( ( int16_t * ) data, width, height ) );
-						break;
-					case EPR_Uint32:
-						ret.reset( new DicomChunk( ( uint32_t * )data, width, height ) );
-						break;
-					case EPR_Sint32:
-						ret.reset( new DicomChunk( ( int32_t * ) data, width, height ) );
-						break;
-					default:
-						FileFormat::throwGenericError( "Unsupported datatype for monochrome images" ); //@todo tell the user which datatype it is
-					}
-
-					if ( ret ) {
-						ret->touchBranch( ImageFormat_Dicom::dicomTagTreeName ).transfer(props,"Item");
-					}
-				} else if ( pix->getPlanes() == 3 ) { //try to load data as color image
-					// if there are 3 planes data is actually an array of 3 pointers
-					switch ( pix->getRepresentation() ) {
-					case EPR_Uint8:
-						ret.reset( copyColor( ( Uint8 ** )data, width, height ) );
-						break;
-					case EPR_Uint16:
-						ret.reset( copyColor( ( Uint16 ** )data, width, height ) );
-						break;
-					default:
-						FileFormat::throwGenericError( "Unsupported datatype for color images" ); //@todo tell the user which datatype it is
-					}
-
-					if ( ret ) {
-						ret->touchBranch( ImageFormat_Dicom::dicomTagTreeName ).transfer(props,"Item");
-					}
-				} else {
-					FileFormat::throwGenericError( "Unsupported pixel type." );
-				}
-			} else {
-				FileFormat::throwGenericError( "Didn't get any pixel data" );
-			}
-		} else {
-			FileFormat::throwGenericError( std::string( "Failed to open image: " ) + DicomImage::getString( img.getStatus() ));
-		}
-		return *ret;
+		DcmObject *image_tag=loader.dcmObject2PropMap( &dcfile, props, dialects );
+		if(!image_tag)
+			ImageFormat_Dicom::throwGenericError("No image data in dicom");
+		
+		data::Chunk ret=getPixelData(dynamic_cast<DcmElement *>(image_tag),props);
+		ret.touchBranch( ImageFormat_Dicom::dicomTagTreeName ).transfer(props,"Item");
+		
+		return ret;
 	}
 };
 
