@@ -8,11 +8,17 @@
 #include <dcmtk/oflog/config.h>
 #include <dcmtk/oflog/tstring.h>
 #include <dcmtk/oflog/spi/logevent.h>
+#include <openjpeg.h>
 
 #include <dcmtk/dcmjpeg/djdecode.h>    /* for dcmjpeg decoders */
 #include <dcmtk/dcmjpeg/dipijpeg.h>    /* for dcmimage JPEG plugin */
 
 #include <boost/iostreams/copy.hpp>
+#include <dcmtk/dcmdata/dcpixel.h>
+#include <dcmtk/dcmdata/dcpixseq.h>
+
+#include <boost/iostreams/stream.hpp>
+
 
 namespace isis
 {
@@ -20,6 +26,120 @@ namespace image_io
 {
 namespace _internal
 {
+typedef  boost::iostreams::basic_array_source<uint8_t> jp2stream_adapter; // must be compatible to std::streambuf
+void jp2_err(const char *msg, void *client_data)
+{
+	std::string no_endl_msg(msg);
+	no_endl_msg=no_endl_msg.substr(0,no_endl_msg.find_last_not_of("\r\n")+1);
+    LOG(Runtime,error) << "Got error " << no_endl_msg << " when decoding jp2 stream";
+}
+void jp2_warn(const char *msg, void *client_data)
+{
+	std::string no_endl_msg(msg);
+	no_endl_msg=no_endl_msg.substr(0,no_endl_msg.find_last_not_of("\r\n")+1);
+    LOG(Runtime,warning) << "Got warning " << no_endl_msg << " when decoding jp2 stream";
+}
+void jp2_info(const char *msg, void *client_data)
+{
+	std::string no_endl_msg(msg);
+	no_endl_msg=no_endl_msg.substr(0,no_endl_msg.find_last_not_of("\r\n")+1);
+	LOG(Runtime,info) << "Got info " << no_endl_msg << " when decoding jp2 stream";
+}
+OPJ_SIZE_T opj_stream_read_mem(void * p_buffer, OPJ_SIZE_T p_nb_bytes, void * p_user_data)
+{
+	return reinterpret_cast<boost::iostreams::stream<jp2stream_adapter>*>(p_user_data)->read((uint8_t*)p_buffer,p_nb_bytes).gcount(); 
+}
+OPJ_OFF_T opj_stream_skip_mem(OPJ_OFF_T p_nb_bytes, void * p_user_data){
+	auto stream=reinterpret_cast<boost::iostreams::stream<jp2stream_adapter>*>(p_user_data);
+	stream->ignore(p_nb_bytes);
+	return stream->tellg();
+}
+OPJ_BOOL opj_stream_seek_mem(OPJ_OFF_T p_nb_bytes, void * p_user_data){
+	auto stream=reinterpret_cast<boost::iostreams::stream<jp2stream_adapter>*>(p_user_data);
+	stream->seekg(p_nb_bytes); 
+	return stream->good();
+}
+
+util::PropertyMap readStream(DicomElement &token,size_t stream_len,std::multimap<uint32_t,data::ValueArrayReference> &data_elements);
+util::PropertyMap readItem(DicomElement &token,std::multimap<uint32_t,data::ValueArrayReference> &data_elements){
+	assert(token.getID32()==0xFFFEE000);//must be an item-tag
+	size_t len=token.getLength();
+	token.next(token.getPosition()+8);
+	return readStream(token,len,data_elements);
+}
+void readDataItems(DicomElement &token,std::multimap<uint32_t,data::ValueArrayReference> &data_elements){
+	const uint32_t len=token.dataAs<uint32_t>(1)[0];//thats the sequence's length
+	const uint32_t id=token.getID32();
+	
+	bool wide= (token.getVR()=="OW");
+	assert(len==0xFFFFFFFF); //actually expected to be undefined
+	
+	for(token.next(token.getPosition()+8+4);token.getID32()==0xFFFEE000;token.next()){ //iterate through items and store them
+		const size_t len=token.getLength();
+		if(len){
+			LOG(Debug,info) << "Found data item with " << len << " bytes at " << token.getPosition();
+			if(wide)
+				data_elements.insert({id,token.dataAs<uint16_t>()});
+			else
+				data_elements.insert({id,token.dataAs<uint8_t>()});
+		} else 
+			LOG(Debug,info) << "Ignoring zero length data item at " << token.getPosition();
+	}
+	assert(token.getID32()==0xFFFEE0DD);//we expect a sequence delimiter (will be eaten by the calling loop)
+}
+util::PropertyMap readStream(DicomElement &token,size_t stream_len,std::multimap<uint32_t,data::ValueArrayReference> &data_elements){
+	size_t start=token.getPosition();
+	util::PropertyMap ret;
+
+	for(;token.getPosition()-start<stream_len;token.next()){
+		//break the loop if we find a delimiter
+		if(
+			token.getID32()==0xFFFEE00D //Item Delim. Tag
+		){ 
+			token.next(token.getPosition()+8);
+			break;
+		}
+
+		const std::string vr=token.getVR();
+		if(vr=="OB" || vr=="OW"){
+			switch(token.getID32()){
+				case 0x7FE00010: //http://dicom.nema.org/Dicom/2013/output/chtml/part05/sect_A.4.html
+					readDataItems(token,data_elements);
+					break;
+				default:
+					if(vr=="OW")
+						data_elements.insert({token.getID32(),token.dataAs<uint16_t>()});
+					else
+						data_elements.insert({token.getID32(),token.dataAs<uint8_t>()});
+			}
+		}else if(vr=="SQ"){ //explicit SQ (4 bytes tag-id + 2bytes "SQ" + 2bytes reserved)
+			//next 4 bytes are the length of the sequence
+			uint32_t len=token.dataAs<uint32_t>(1)[0];
+			const auto name=token.getName();
+			
+			//we expect the sequence start token
+			token.next(token.getPosition()+8+4);
+			LOG_IF(len==0xffffffff,Debug,verbose_info) << "Sequence of undefined length found (" << name << "), looking for items at " << token.getPosition();
+			LOG_IF(len!=0xffffffff,Debug,verbose_info) << "Sequence of length " << len << " found (" << name << "), looking for items at " << token.getPosition();
+			size_t start=token.getPosition();
+			while(token.getPosition()-start<len && token.getID32()!=0xFFFEE0DD){ //break the loop when we find the sequence delimiter tag or reach the end
+				assert(token.getID32()==0xFFFEE000);//must be an item-tag
+				size_t len=token.getLength();
+				token.next(token.getPosition()+8);
+				util::PropertyMap subtree=readStream(token,len,data_elements);
+				ret.touchBranch(name).transfer(subtree);
+			}
+			LOG(Debug,verbose_info) << "Sequence " << name << " finished, continuing at " << token.getPosition()+token.getLength()+8;
+		}else{
+			auto value=token.getValue();
+			if(!value.isEmpty()){
+				ret.touchProperty(token.getName())=*value;
+			}
+		}
+	}
+	return ret;
+}
+
 class DicomChunk : public data::Chunk
 {
 	static unsigned short getPixelType(const util::PropertyMap &props){
@@ -45,40 +165,133 @@ class DicomChunk : public data::Chunk
 			LOG(Runtime,error) << "Unsupportet photometric interpretation " << color;
 		ImageFormat_Dicom::throwGenericError("bad pixel type");
 	}
-	static data::Chunk getPixelData(DcmElement *obj, const util::PropertyMap &props){
-		const auto vr=obj->getVR();
-// 		const auto vm=obj->getVM();
-		const DcmXfer transferSyntax(props.getValueAsOr<std::string>("Item/TransferSyntaxUID","1.2.840.10008.1.2").c_str());
-		auto rows=props.getValueAs<uint32_t>("Item/Rows");
-		auto columns=props.getValueAs<uint32_t>("Item/Columns");
-		//Number of Frames: 0028,0008
+	static data::Chunk getj2k(data::ByteArray bytes){
+		// set up stream
+		const void *p=bytes.getRawAddress().get();
+		const uint8_t *start=bytes.begin(), *end=bytes.end();
+
+		boost::iostreams::stream<_internal::jp2stream_adapter> stream;
+		stream.open(_internal::jp2stream_adapter(start,end));
+
+		opj_stream_t *l_stream = opj_stream_default_create(true);
+		opj_stream_set_user_data(l_stream,&stream,nullptr);
+		opj_stream_set_user_data_length(l_stream,bytes.getLength());
+
+		auto l_codec = opj_create_decompress(OPJ_CODEC_J2K);
 		
+		opj_set_info_handler(l_codec, jp2_info, 00);
+		opj_set_warning_handler(l_codec, jp2_warn, 00);
+		opj_set_error_handler(l_codec, jp2_err, 00);
+
+// 		opj_stream_set_user_data(l_stream, p_file,(opj_stream_free_user_data_fn) fclose);
+// 		opj_stream_set_user_data_length(l_stream, opj_get_data_length_from_file(p_file));
 		
-// 		auto bits_stored=props.getValueAs<uint8_t>("Item/BitsStored");
-		if(transferSyntax.getXfer()==EXS_JPEG2000LosslessOnly){ //1.2.840.10008.1.2.4.90
-			LOG(Runtime,error) << "Sorry, transfer syntax " << transferSyntax.getXferName() <<  " is not yet supportet";
-			ImageFormat_Dicom::throwGenericError("Unsupported format");
+		opj_stream_set_read_function(l_stream, _internal::opj_stream_read_mem);
+// 		opj_stream_set_write_function(l_stream,(opj_stream_write_fn) opj_write_from_file);
+		opj_stream_set_skip_function(l_stream, _internal::opj_stream_skip_mem);
+		opj_stream_set_seek_function(l_stream, _internal::opj_stream_seek_mem);
+
+
+		/* set decoding parameters to default values */
+		opj_dparameters_t parameters;
+		opj_set_default_decoder_parameters(&parameters);
+		
+		if (!opj_setup_decoder(l_codec, &parameters)) {
+			fprintf(stderr, "ERROR -> j2k_dump: failed to setup the decoder\n");
 		}
-		const auto length= obj->getLength(transferSyntax.getXfer());
-		Uint8 *bytes_ptr;
-		obj->getUint8Array(bytes_ptr);
+
+		opj_image_t* image = NULL;
+		/* Read the main header of the codestream and if necessary the JP2 boxes*/
+		if (! opj_read_header(l_stream, l_codec, &image)) {
+			fprintf(stderr, "ERROR -> opj_decompress: failed to read the header\n");
+			opj_stream_destroy(l_stream);
+			opj_destroy_codec(l_codec);
+			opj_image_destroy(image);
+		}
 		
-		data::Chunk ret=data::Chunk::createByID(getPixelType(props),columns,rows);
-		memcpy(ret.asValueArrayBase().getRawAddress().get(),bytes_ptr,length);
-		LOG(Debug,info) << "Created " << ret.getSizeAsString() << "-Chunk of type " << ret.getTypeName();
-		return ret;
+		if (!(opj_decode(l_codec, l_stream, image) && opj_end_decompress(l_codec,   l_stream))) {
+			fprintf(stderr, "ERROR -> opj_decompress: failed to decode image!\n");
+			opj_destroy_codec(l_codec);
+			opj_stream_destroy(l_stream);
+			opj_image_destroy(image);
+		}
+        if (image->comps[0].data == NULL) {
+            fprintf(stderr, "ERROR -> opj_decompress: no image data!\n");
+            opj_destroy_codec(l_codec);
+            opj_stream_destroy(l_stream);
+            opj_image_destroy(image);
+        }
+        if (image->color_space != OPJ_CLRSPC_SYCC
+                && image->numcomps == 3 && image->comps[0].dx == image->comps[0].dy
+                && image->comps[1].dx != 1) {
+            image->color_space = OPJ_CLRSPC_SYCC;
+        } else if (image->numcomps <= 2) {
+            image->color_space = OPJ_CLRSPC_GRAY;
+        }
+		
+		if(image->numcomps!=1)
+			FileFormat::throwGenericError("Only grayscale j2k data supportet");
+
+		
+		if(image->comps[0].prec>8){
+			return data::MemChunk<uint16_t>(image->comps[0].data, image->comps[0].w,image->comps[0].h);
+		} else {
+			return data::MemChunk<uint8_t>(image->comps[0].data, image->comps[0].w,image->comps[0].h);
+		} 
+	}
+	data::Chunk getPixelData(std::list<data::ValueArrayReference> &&data_elements,std::string transferSyntax){
+// 		const auto vm=obj->getVM();
+// 		bool swap_endian=false;
+		auto rows=getValueAs<uint32_t>("Rows");
+		auto columns=getValueAs<uint32_t>("Columns");
+// 		//Number of Frames: 0028,0008
+// 		const auto length= obj->getLength(transferSyntax.getXfer());
+// 		Uint8 *bytes_ptr;
+// 		OFCondition cond=obj->getUint8Array(bytes_ptr);
+// 		obj->writeXML(std::cout);
+// 
+// 		if(!cond.good())
+// 			FileFormat::throwGenericError(std::string("Error reading image data: ")+cond.text());
+// 
+// // 		auto bits_stored=props.getValueAs<uint8_t>("Item/BitsStored");
+// 		switch(transferSyntax.getXfer()){
+// 			case EXS_LittleEndianImplicit:;
+// 			case EXS_LittleEndianExplicit:swap_endian=(__BYTE_ORDER == __BIG_ENDIAN);break;
+// 			case EXS_BigEndianImplicit:;
+// 			case EXS_BigEndianExplicit:swap_endian=(__BYTE_ORDER == __LITTLE_ENDIAN);break;
+// 			case EXS_JPEG2000LosslessOnly:getJP2k(bytes_ptr,length,columns,rows);break;
+// 			default:{
+// 				LOG(Runtime,error) << "Sorry, transfer syntax " << transferSyntax.getXferName() <<  " is not yet supportet";
+// 				ImageFormat_Dicom::throwGenericError("Unsupported format");
+// 			}
+// 		}
+// 
+// 		//read uncompressed data
+// 		data::Chunk ret=data::Chunk::createByID(getPixelType(props),columns,rows);
+// 		memcpy(ret.asValueArrayBase().getRawAddress().get(),bytes_ptr,length);
+// 		if(swap_endian)
+// 			ret.asValueArrayBase().endianSwap();
+// 		
+// 		LOG(Debug,info) << "Created " << ret.getSizeAsString() << "-Chunk of type " << ret.getTypeName();
+// 		return ret;
 	}
 public:
-	static data::Chunk makeChunk( const ImageFormat_Dicom &loader, DcmFileFormat &dcfile, std::list<util::istring> dialects ) {
-		util::PropertyMap props;
-		DcmObject *image_tag=loader.dcmObject2PropMap( &dcfile, props, dialects );
-		if(!image_tag)
-			ImageFormat_Dicom::throwGenericError("No image data in dicom");
-		
-		data::Chunk ret=getPixelData(dynamic_cast<DcmElement *>(image_tag),props);
-		ret.touchBranch( ImageFormat_Dicom::dicomTagTreeName ).transfer(props,"Item");
-		
-		return ret;
+	DicomChunk(std::list<data::ValueArrayReference> &&data_elements,const std::string &transferSyntax,const util::PropertyMap &props)
+	{
+		if(transferSyntax=="1.2.840.10008.1.2.4.90"){ //JPEG 2K
+			assert(data_elements.size()==1);
+			assert(data_elements.front()->getTypeID()==data::ByteArray::staticID());
+			auto data=data_elements.front()->castToValueArray<uint8_t>();
+
+			static_cast<data::Chunk&>(*this)=getj2k(data);
+			this->touchBranch(ImageFormat_Dicom::dicomTagTreeName)=props;
+			
+			LOG(Runtime,info) 
+				<< "Created " << this->getSizeAsString() << "-Image of type " << this->getTypeName() 
+				<< " from a " << data.getLength() << " bytes j2k stream";
+		} else {
+			
+		}
 	}
 };
 
@@ -109,22 +322,6 @@ util::istring ImageFormat_Dicom::suffixes( io_modes modes )const
 }
 std::string ImageFormat_Dicom::getName()const {return "Dicom";}
 std::list<util::istring> ImageFormat_Dicom::dialects()const {return {"siemens","withExtProtocols","nocsa","keepmosaic","forcemosaic"};}
-
-
-
-void ImageFormat_Dicom::addDicomDict( DcmDataDictionary &dict )
-{
-	for( DcmHashDictIterator i = dict.normalBegin(); i != dict.normalEnd(); i++ ) {
-		const DcmDictEntry *entry = *i;
-		const DcmTagKey key = entry->getKey();
-		const char *name = entry->getTagName();
-
-		if( util::istring( "Unknown" ) == name ) {
-			dictionary[key] = util::istring( unknownTagName ) + key.toString().c_str();
-		} else
-			dictionary[key] = name;
-	}
-}
 
 
 void ImageFormat_Dicom::sanitise( util::PropertyMap &object, std::list<util::istring> dialects )
@@ -511,15 +708,50 @@ std::list<data::Chunk> ImageFormat_Dicom::load ( std::streambuf *source, std::li
 
 std::list< data::Chunk > ImageFormat_Dicom::load(const data::ByteArray source, std::list<util::istring> formatstack, std::list<util::istring> dialects, std::shared_ptr<util::ProgressFeedback> feedback )
 {
-	DcmInputBufferStream dcstream;
-	DcmFileFormat dcfile;
-	dcstream.setBuffer(source.getRawAddress().get(),source.getLength());
-	dcstream.setEos();
-	OFCondition loaded = dcfile.read( dcstream );
+	std::list< data::Chunk > ret;
+	const char prefix[4]={'D','I','C','M'};
+	if(memcmp(&source[128],prefix,4)!=0)
+		throwGenericError("Prefix \"DICM\" not found");
+	
+	size_t meta_info_length = _internal::DicomElement(source,128+4,boost::endian::order::little).getValue()->as<uint32_t>();
+	std::multimap<uint32_t,data::ValueArrayReference> data_elements;
+	
+	LOG(Debug,info)<<"Reading Meta Info begining at " << 158 << " length: " << meta_info_length-14;
+	_internal::DicomElement m(source,158,boost::endian::order::little);
+	util::PropertyMap meta_info=readStream(m,meta_info_length-14,data_elements);
+	
+	const auto transferSyntax= meta_info.getValueAsOr<std::string>("TransferSyntaxUID","1.2.840.10008.1.2");
+	boost::endian::order endian;
+	if(
+		transferSyntax=="1.2.840.10008.1.2" ||  // Implicit VR Little Endian
+		transferSyntax.substr(0,19)=="1.2.840.10008.1.2.1" || // Explicit VR Little Endian
+		transferSyntax=="1.2.840.10008.1.2.4.90" //JPEG 2000 Image Compression (Lossless Only)
+	){ 
+		 endian=boost::endian::order::little;
+	} else if(transferSyntax=="1.2.840.10008.1.2.2"){ //explicit big endian
+		 endian=boost::endian::order::big;
+	} else {
+		LOG(Runtime,error) << "Sorry, transfer syntax " << transferSyntax <<  " is not (yet) supportet";
+		ImageFormat_Dicom::throwGenericError("Unsupported transfer syntax");
+	}
 
-	if ( loaded.good() ) {
-		std::list< data::Chunk > ret;
-		data::Chunk chunk = _internal::DicomChunk::makeChunk( *this, dcfile, dialects );
+	//the "real" dataset
+	LOG(Debug,info)<<"Reading dataset begining at " << 144+meta_info_length;
+	_internal::DicomElement dataset_token(source,144+meta_info_length,boost::endian::order::little);
+	
+	util::PropertyMap props=_internal::readStream(dataset_token,source.getLength()-144-meta_info_length,data_elements);
+	
+	//extract actual image data from data_elements
+	std::list<data::ValueArrayReference> img_data;
+	for(auto e_it=data_elements.find(0x7FE00010);e_it!=data_elements.end() && e_it->first==0x7FE00010;){
+		img_data.push_back(e_it->second);
+		data_elements.erase(e_it++);
+	}
+	
+	if(!img_data.empty()){
+		ret.push_back(_internal::DicomChunk(std::move(img_data),transferSyntax,props));
+		data::Chunk &chunk=ret.front();
+	
 		//we got a chunk from the file
 		sanitise( chunk, dialects );
 		const util::slist iType = chunk.getValueAs<util::slist>( util::istring( ImageFormat_Dicom::dicomTagTreeName ) + "/" + "ImageType" );
@@ -540,12 +772,9 @@ std::list< data::Chunk > ImageFormat_Dicom::load(const data::ByteArray source, s
 			ret.back().rename( "SiemensNumberOfImagesInMosaic", "SliceOrientation" );
 		}
 
-		return ret;
-	} else {
-		FileFormat::throwGenericError( std::string( "Failed to open file: " ) + loaded.text() );
-		return std::list< data::Chunk >();
-	}
-
+	} 
+	
+	return ret;
 }
 
 void ImageFormat_Dicom::write( const data::Image &/*image*/, const std::string &/*filename*/, std::list<util::istring> /*dialects*/, std::shared_ptr<util::ProgressFeedback> /*feedback*/ )
@@ -555,44 +784,36 @@ void ImageFormat_Dicom::write( const data::Image &/*image*/, const std::string &
 
 ImageFormat_Dicom::ImageFormat_Dicom()
 {
-	//first read external dictionary if available
-	if ( dcmDataDict.isDictionaryLoaded() ) {
-		DcmDataDictionary &dict = dcmDataDict.wrlock();
-		addDicomDict( dict );
-		dcmDataDict.unlock(); 
-		DJDecoderRegistration::registerCodecs();
-	} else {
-		// check /usr/share/doc/dcmtk/datadict.txt.gz and/or
-		// set DCMDICTPATH or fix DCM_DICT_DEFAULT_PATH in cfunix.h of dcmtk
-		LOG( Runtime, warning ) << "No official data dictionary loaded, will only use known attributes";
-	}
+	//modify the dicionary
+	// override known entries
+	_internal::dicom_dict[0x00100010] = "PatientsName";
+	_internal::dicom_dict[0x00100030] = "PatientsBirthDate";
+	_internal::dicom_dict[0x00100040] = "PatientsSex";
+	_internal::dicom_dict[0x00101010] = "PatientsAge";
+	_internal::dicom_dict[0x00101030] = "PatientsWeight";
 
-	// than override known entries
-	dictionary[DcmTag( 0x0010, 0x0010 )] = "PatientsName";
-	dictionary[DcmTag( 0x0010, 0x0030 )] = "PatientsBirthDate";
-	dictionary[DcmTag( 0x0010, 0x0040 )] = "PatientsSex";
-	dictionary[DcmTag( 0x0010, 0x1010 )] = "PatientsAge";
-	dictionary[DcmTag( 0x0010, 0x1030 )] = "PatientsWeight";
-
-	dictionary[DcmTag( 0x0008, 0x1050 )] = "PerformingPhysiciansName";
+	_internal::dicom_dict[0x00080008] = "ImageType";
+	_internal::dicom_dict[0x00081050] = "PerformingPhysiciansName";
 
 	// override some Siemens specific stuff because it is SliceOrientation in the standard and mosaic-size for siemens - we will figure out while sanitizing
-	dictionary[DcmTag( 0x0019, 0x100a )] = "SiemensNumberOfImagesInMosaic";
-	dictionary[DcmTag( 0x0019, 0x100c )] = "SiemensDiffusionBValue";
-	dictionary[DcmTag( 0x0019, 0x100e )] = "SiemensDiffusionGradientOrientation";
-	dictionary.erase(DcmTag( 0x0021, 0x1010 )); // dcmtk says its ImageType but it isn't (at least not on Siemens)
+	_internal::dicom_dict[0x0019100a] = "SiemensNumberOfImagesInMosaic";
+	_internal::dicom_dict[0x0019100c] = "SiemensDiffusionBValue";
+	_internal::dicom_dict[0x0019100e] = "SiemensDiffusionGradientOrientation";
+	_internal::dicom_dict.erase(0x00211010); // dcmtk says its ImageType but it isn't (at least not on Siemens)
 
 	for( unsigned short i = 0x0010; i <= 0x00FF; i++ ) {
-		dictionary[DcmTag( 0x0029, i )] = ( std::string( "Private Code for " ) + DcmTag( 0x0029, i << 8 ).toString().c_str() + "-" + DcmTag( 0x0029, ( i << 8 ) + 0xFF ).toString().c_str() ).c_str();
+		_internal::dicom_dict[(0x0029<<16)+ i ] = util::istring( "Private Code for " ) + 
+			_internal::id2Name( 0x0029, i << 8 ) + "-" + _internal::id2Name( 0x0029, ( i << 8 ) + 0xFF );
 	}
 	
 	//http://www.healthcare.siemens.com/siemens_hwem-hwem_ssxa_websites-context-root/wcm/idc/groups/public/@global/@services/documents/download/mdaw/mtiy/~edisp/2008b_ct_dicomconformancestatement-00073795.pdf
+	//@todo do we need this
 	for( unsigned short i = 0x0; i <= 0x02FF; i++ ) {
 		char buff[7];
 		std::snprintf(buff,7,"0x%.4X",i);
-		dictionary[DcmTag( 0x6000, i )] = util::PropertyMap::PropPath("DICOM overlay info") / util::PropertyMap::PropPath(buff);
+		_internal::dicom_dict[(0x6000<<16)+ i] = util::PropertyMap::PropPath("DICOM overlay info") / util::PropertyMap::PropPath(buff);
 	}
-	dictionary[DcmTag( 0x6000, 0x3000 )] = util::PropertyMap::PropPath("DICOM overlay data");
+	_internal::dicom_dict[0x60003000] = "DICOM overlay data";
 	
 
 	//hack to steal logging from dcmtk and redirect it to our own
@@ -601,13 +822,6 @@ ImageFormat_Dicom::ImageFormat_Dicom()
 	logger.removeAllAppenders();
 	logger.addAppender(dcmtk::log4cplus::SharedAppenderPtr(new _internal::DcmtkLogger));
 }
-
-util::PropertyMap::PropPath ImageFormat_Dicom::tag2Name( const DcmTagKey &tag )const
-{
-	std::map< DcmTagKey, util::PropertyMap::PropPath >::const_iterator entry = dictionary.find( tag );
-	return ( entry != dictionary.end() ) ? entry->second : util::PropertyMap::PropPath( util::istring( unknownTagName ) + tag.toString().c_str() );
-}
-
 
 }
 }

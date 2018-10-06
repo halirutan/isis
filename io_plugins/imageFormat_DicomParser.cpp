@@ -1,6 +1,7 @@
 #include "imageFormat_Dicom.hpp"
 #include <clocale>
 #include <boost/date_time/gregorian/gregorian.hpp>
+#include <boost/endian/buffers.hpp>
 #include <isis/core/common.hpp>
 #include <dcmtk/dcmdata/dcdict.h>
 #include <dcmtk/dcmdata/dcdicent.h>
@@ -12,6 +13,15 @@ namespace image_io
 
 namespace _internal
 {
+util::istring id2Name( const uint16_t group, const uint16_t element ){
+	char id_str[4+4+3+1];
+	sprintf(id_str,"(%04x,%04x)",group,element);
+	return id_str;
+}
+util::istring id2Name( const uint32_t id32 ){
+	return id2Name((id32&0xFFFF0000)>>16,id32&0xFFFF);
+}
+
 template<typename ST, typename DT> bool try_cast( const ST &source, DT &dest )
 {
 	bool ret = true;
@@ -24,6 +34,117 @@ template<typename ST, typename DT> bool try_cast( const ST &source, DT &dest )
 
 	return ret;
 }
+struct tag_length_visitor
+{
+	template<boost::endian::order Order> size_t operator()(const ExplicitVrTag<Order> *_tag)const{
+		return _tag->length.value();
+	}
+	template<boost::endian::order Order> size_t operator()(const ImplicitVrTag<Order> *_tag)const{
+		return _tag->length.value();
+	}
+};
+struct tag_vr_visitor
+{
+	template<boost::endian::order Order> std::string operator()(const ExplicitVrTag<Order> *_tag)const{
+		return std::string(_tag->vr,_tag->vr+2);
+	}
+	template<boost::endian::order Order> std::string operator()(const ImplicitVrTag<Order> *_tag)const{
+		return "--";
+	}
+};
+struct tag_id_visitor
+{
+	template<boost::endian::order Order> uint32_t operator()(const Tag<Order> *_tag)const{
+		return _tag->getID32();
+	}
+};
+size_t DicomElement::getLength()const{
+	const size_t len=boost::apply_visitor(tag_length_visitor(),tag);
+	return len;
+}
+size_t DicomElement::getPosition()const{
+	return position;
+}
+util::istring DicomElement::getIDString()const{
+	return id2Name(getID32());
+}
+
+uint32_t DicomElement::getID32()const{
+	return boost::apply_visitor(tag_id_visitor(),tag);
+}
+
+std::string DicomElement::getVR()const{
+	return boost::apply_visitor(tag_vr_visitor(),tag);
+}
+util::PropertyMap::PropPath DicomElement::getName()const{
+	auto found=dicom_dict.find(getID32());
+	if(found!=dicom_dict.end())
+		return found->second;
+	else{
+		return util::istring( ImageFormat_Dicom::unknownTagName ) + getIDString().c_str();
+	}
+}
+
+DicomElement::DicomElement(const data::ByteArray &_source, size_t _position, boost::endian::order _endian):source(_source),position(_position),endian(_endian){
+	next(position);//trigger read by calling next without moving
+}
+DicomElement &DicomElement::next(){
+	const size_t len=getLength();
+	LOG_IF(len==0xffffffffffffffff,Debug,error) << "Doing next on " << getName() << " at " << position << " with an undefined length";
+	return next(position+len+8);
+}
+DicomElement &DicomElement::next(size_t _position){
+	position=_position;
+	switch(endian){
+		case boost::endian::order::big:
+			tag=makeTag<boost::endian::order::big>();
+			break;
+		case boost::endian::order::little:
+			tag=makeTag<boost::endian::order::little>();
+			break;
+	}
+	return *this;
+}
+
+
+const uint8_t *DicomElement::data()const{
+	return &source[position+2+2+2+2]; //offset by group-id, element-id, vr and length
+}
+util::ValueReference DicomElement::getValue(){
+	util::ValueReference ret;
+	const std::string vr=getVR();
+	auto found_generator=generator_map.find(vr);
+	if(found_generator!=generator_map.end()){
+		auto generator=found_generator->second;;
+		size_t mult=generator.value_size?getLength()/generator.value_size:1;
+		
+		if(mult==1)
+			ret=generator.scalar(this);
+		else if(generator.list)
+			ret=generator.list(this);
+		else { // fallback for non- supportet lists @todo
+			assert(false);
+		}
+
+		LOG(Debug,verbose_info) << "Parsed " << getVR() << "-tag " << getName() << " "  << getIDString() << " at position " << position << " as "  << ret;
+	} else {
+		LOG(Debug,error) << "Could not find an interpreter for the VR " << getVR() << " of " << getName() << "/" << getIDString() << " at " << position ;
+	}
+	
+	return ret;
+}
+DicomElement DicomElement::next(boost::endian::order endian)const{
+	//@todo handle end of stream
+	size_t nextpos=position+2+2+2+2+getLength();
+	return DicomElement(source,nextpos,endian);
+}
+bool DicomElement::endian_swap()const{
+	switch(endian){
+		case boost::endian::order::big:   return (__BYTE_ORDER == __LITTLE_ENDIAN);
+		case boost::endian::order::little:return (__BYTE_ORDER == __BIG_ENDIAN);
+	}
+}
+
 
 template<typename T> std::list<T> dcmtkListString2list( DcmElement *elem )
 {
@@ -342,7 +463,7 @@ size_t ImageFormat_Dicom::parseCSAEntry( Uint8 *at, util::PropertyMap &map, std:
 	pos += 0x4;
 	/*Sint32 syngodt=endian<Uint8,Uint32>(array+pos);*/
 	pos += sizeof( Sint32 );
-	const Sint32 nitems = endian<Uint8, Uint32>( at + pos );
+	const Sint32 nitems = ((boost::endian::little_int32_buf_t*)( at + pos ))->value();
 	pos += sizeof( Sint32 );
 	static const std::string whitespaces( " \t\f\v\n\r" );
 	
@@ -351,7 +472,7 @@ size_t ImageFormat_Dicom::parseCSAEntry( Uint8 *at, util::PropertyMap &map, std:
 		util::slist ret;
 
 		for ( unsigned short n = 0; n < nitems; n++ ) {
-			Sint32 len = endian<Uint8, Uint32>( at + pos );
+			Sint32 len = ((boost::endian::little_int32_buf_t*)( at + pos ))->value();
 			pos += sizeof( Sint32 );//the length of this element
 			pos += 3 * sizeof( Sint32 ); //whatever
 
@@ -452,62 +573,151 @@ bool ImageFormat_Dicom::parseCSAValueList( const util::slist &val, const util::P
 
 DcmObject *ImageFormat_Dicom::dcmObject2PropMap( DcmObject *master_obj, util::PropertyMap &map, std::list<util::istring> dialects )const
 {
-	const std::string  old_loc=std::setlocale(LC_ALL,"C");
-	DcmObject *img=nullptr;
-	for ( DcmObject *obj = master_obj->nextInContainer( NULL ); obj; obj = master_obj->nextInContainer( obj ) ) {
-		const DcmTagKey &tag = obj->getTag();
-
-		if ( tag == DcmTagKey( 0x7fe0, 0x0010 ) ){
-			assert(!img);
-			img=obj;
-		} else if ( tag == DcmTagKey( 0x0029, 0x1010 ) || tag == DcmTagKey( 0x0029, 0x1020 ) ) { //CSAImageHeaderInfo
-			boost::optional< util::PropertyValue& > known = map.queryProperty( "Private Code for (0029,1000)-(0029,10ff)" );
-
-			if( known && known->as<std::string>() == "SIEMENS CSA HEADER" ) {
-				if(!checkDialect(dialects,"nocsa")){
-					const util::PropertyMap::PropPath name = ( tag == DcmTagKey( 0x0029, 0x1010 ) ) ? "CSAImageHeaderInfo" : "CSASeriesHeaderInfo";
-					DcmElement *elem = dynamic_cast<DcmElement *>( obj );
-					try{
-						parseCSA( elem, map.touchBranch( name ), dialects );
-					} catch(std::exception &e){
-						LOG( Runtime, error ) << "Error parsing CSA data ("<< util::MSubject(e.what()) <<"). Deleting " << util::MSubject(name);
-					}
-				}
-			} else {
-				LOG( Runtime, warning ) << "Ignoring entry " << tag.toString() << ", binary format " << *known << " is not known";
-			}
-		} else if ( tag == DcmTagKey( 0x0029, 0x0020 ) ) { //MedComHistoryInformation
-			//@todo special handling needed
-			LOG( Debug, info ) << "Ignoring MedComHistoryInformation at " << tag.toString();
-		} else if ( obj->isLeaf() ) { // common case
-			if ( obj->getTag() == DcmTag( 0x0008, 0x0032 ) ) {
-				OFString buff;
-				dynamic_cast<DcmElement *>( obj )->getOFString( buff, 0 );
-
-				if( buff.length() < 8 ) {
-					LOG( Runtime, warning ) << "The Acquisition Time " << util::MSubject( buff ) << " is not precise enough, ignoring it";
-					continue;
-				}
-			}
-
-			DcmElement *elem = dynamic_cast<DcmElement *>( obj );
-			const size_t mult = obj->getVM();
-
-			if ( mult == 0 )
-				LOG( Runtime, verbose_info ) << "Skipping empty Dicom-Tag " << util::MSubject( tag2Name( tag ) );
-			else if ( mult == 1 )
-				parseScalar( elem, tag2Name( tag ), map );
-			else
-				parseList( elem, tag2Name( tag ), map );
-		} else {
-			DcmObject *buff=dcmObject2PropMap( obj, map.touchBranch( tag2Name( tag ) ), dialects );
-			assert(!(img && buff));
-			if(buff)img=buff;
-		}
-	}
-	std::setlocale(LC_ALL,old_loc.c_str());
-	return img;
+// 	const std::string  old_loc=std::setlocale(LC_ALL,"C");
+// 	DcmObject *img=nullptr;
+// 	for ( DcmObject *obj = master_obj->nextInContainer( NULL ); obj; obj = master_obj->nextInContainer( obj ) ) {
+// 		const DcmTagKey &tag = obj->getTag();
+// 
+// 		if ( tag == DcmTagKey( 0x7fe0, 0x0010 ) ){
+// 			assert(!img);
+// 			img=obj;
+// 		} else if ( tag == DcmTagKey( 0x0029, 0x1010 ) || tag == DcmTagKey( 0x0029, 0x1020 ) ) { //CSAImageHeaderInfo
+// 			boost::optional< util::PropertyValue& > known = map.queryProperty( "Private Code for (0029,1000)-(0029,10ff)" );
+// 
+// 			if( known && known->as<std::string>() == "SIEMENS CSA HEADER" ) {
+// 				if(!checkDialect(dialects,"nocsa")){
+// 					const util::PropertyMap::PropPath name = ( tag == DcmTagKey( 0x0029, 0x1010 ) ) ? "CSAImageHeaderInfo" : "CSASeriesHeaderInfo";
+// 					DcmElement *elem = dynamic_cast<DcmElement *>( obj );
+// 					try{
+// 						parseCSA( elem, map.touchBranch( name ), dialects );
+// 					} catch(std::exception &e){
+// 						LOG( Runtime, error ) << "Error parsing CSA data ("<< util::MSubject(e.what()) <<"). Deleting " << util::MSubject(name);
+// 					}
+// 				}
+// 			} else {
+// 				LOG( Runtime, warning ) << "Ignoring entry " << tag.toString() << ", binary format " << *known << " is not known";
+// 			}
+// 		} else if ( tag == DcmTagKey( 0x0029, 0x0020 ) ) { //MedComHistoryInformation
+// 			//@todo special handling needed
+// 			LOG( Debug, info ) << "Ignoring MedComHistoryInformation at " << tag.toString();
+// 		} else if ( obj->isLeaf() ) { // common case
+// 			if ( obj->getTag() == DcmTag( 0x0008, 0x0032 ) ) {
+// 				OFString buff;
+// 				dynamic_cast<DcmElement *>( obj )->getOFString( buff, 0 );
+// 
+// 				if( buff.length() < 8 ) {
+// 					LOG( Runtime, warning ) << "The Acquisition Time " << util::MSubject( buff ) << " is not precise enough, ignoring it";
+// 					continue;
+// 				}
+// 			}
+// 
+// 			DcmElement *elem = dynamic_cast<DcmElement *>( obj );
+// 			const size_t mult = obj->getVM();
+// 
+// 			if ( mult == 0 )
+// 				LOG( Runtime, verbose_info ) << "Skipping empty Dicom-Tag " << util::MSubject( tag2Name( tag ) );
+// 			else if ( mult == 1 )
+// 				parseScalar( elem, _internal::tag2Name( tag ), map );
+// 			else
+// 				parseList( elem, tag2Name( tag ), map );
+// 		} else {
+// 			DcmObject *buff=dcmObject2PropMap( obj, map.touchBranch( tag2Name( tag ) ), dialects );
+// 			assert(!(img && buff));
+// 			if(buff)img=buff;
+// 		}
+// 	}
+// 	std::setlocale(LC_ALL,old_loc.c_str());
+// 	return img;
 }
 
+namespace _internal{
+	template<typename T, typename LT> util::ValueReference list_generate(const DicomElement *e){
+		size_t mult=e->getLength()/sizeof(T);
+		assert(float(mult)*sizeof(T) == e->getLength());
+		auto wrap=e->dataAs<T>(mult);
+		return util::Value<std::list<LT>>(std::list<LT>(wrap.begin(),wrap.end()));
+	}
+	template<typename T> util::ValueReference scalar_generate(const DicomElement *e){
+		assert(e->getLength()==sizeof(T));
+		T *v=(T*)e->data();
+		return util::Value<T>(e->endian_swap() ? data::endianSwap(*v):*v);
+	}
+	util::ValueReference string_generate(const DicomElement *e){
+		//@todo http://dicom.nema.org/Dicom/2013/output/chtml/part05/sect_6.2.html#note_6.1-2-1
+		const uint8_t *start=e->data();
+		const uint8_t *end=start+e->getLength()-1;
+		while(end>=start && (*end==' '|| *end==0)) //cut of trailing spaces and zeros
+			--end;
+		const std::string s(start,end+1);
+		return util::Value<std::string>(s);
+	}
+	util::ValueReference parseAS(const _internal::DicomElement *e){
+		util::ValueReference ret;
+		uint16_t duration = 0;
+		std::string buff=string_generate(e)->castTo<std::string>();
+
+		static boost::numeric::converter <
+		uint16_t, double,
+				boost::numeric::conversion_traits<uint16_t, double>,
+				boost::numeric::def_overflow_handler,
+				boost::numeric::RoundEven<double>
+				> double2uint16;
+
+		if ( _internal::try_cast( buff.substr( 0, buff.find_last_of( "0123456789" ) + 1 ), duration ) ) {
+			switch ( buff.at( buff.size() - 1 ) ) {
+			case 'D':
+			case 'd':
+				break;
+			case 'W':
+			case 'w':
+				duration *= 7;
+				break;
+			case 'M':
+			case 'm':
+				duration = double2uint16( 30.436875 * duration ); // year/12
+				break;
+			case 'Y':
+			case 'y':
+				duration = double2uint16( 365.2425 * duration ); //mean length of a year
+				break;
+			default:
+				LOG( Runtime, warning )
+						<< "Missing age-type-letter, assuming days";
+			}
+			LOG( Debug, verbose_info )
+					<< "Parsed age for " << e->getName() << "(" <<  buff << ")" << " as " << duration << " days";
+			ret=util::Value<uint16_t>(duration);
+		} else
+			LOG( Runtime, warning )
+					<< "Cannot parse age string \"" << buff << "\" in the field \"" << e->getName() << "\"";
+		return ret;
+	}
+
+	std::map<std::string,DicomElement::generator> DicomElement::generator_map={
+		//"trivial" conversions
+		{"FL",{scalar_generate<float>,   list_generate<float,   double>, sizeof(float )}},
+		{"FD",{scalar_generate<double>,  list_generate<double,  double>, sizeof(double)}},
+		{"SS",{scalar_generate<int16_t>, list_generate<int16_t, int32_t>,sizeof(int16_t)}},
+		{"SL",{scalar_generate<int32_t>, list_generate<int32_t, int32_t>,sizeof(int32_t)}},
+		{"US",{scalar_generate<uint16_t>,list_generate<uint16_t,int32_t>,sizeof(uint16_t)}},
+		{"UL",{scalar_generate<uint32_t>,nullptr,                        sizeof(uint32_t)}},
+		//"normal" string types
+		{"LT",{string_generate,nullptr,0}},
+		{"LO",{string_generate,nullptr,0}},
+		{"UI",{string_generate,nullptr,0}},
+		{"ST",{string_generate,nullptr,0}},
+		{"SH",{string_generate,nullptr,0}},
+		{"CS",{string_generate,nullptr,0}},
+		{"PN",{string_generate,nullptr,0}},
+		{"AE",{string_generate,nullptr,0}},
+		//number strings (keep them as string, type-system will take care of the conversion if neccesary)
+		{"IS",{string_generate,nullptr,0}},
+		{"DS",{string_generate,nullptr,0}},
+		//time strings
+		{"DA",{[](const _internal::DicomElement *e){return string_generate(e)->copyByID(util::Value<util::date>::staticID());},nullptr,0}},
+		{"TM",{[](const _internal::DicomElement *e){return string_generate(e)->copyByID(util::Value<util::timestamp>::staticID());},nullptr,0}},
+		{"DT",{[](const _internal::DicomElement *e){return string_generate(e)->copyByID(util::Value<util::timestamp>::staticID());},nullptr,0}}
+	};
+}
 }
 }

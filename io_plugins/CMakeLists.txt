@@ -223,9 +223,11 @@ endif(ISIS_IOPLUGIN_FLIST)
 ############################################################
 if(ISIS_IOPLUGIN_DICOM)
 	find_package(DCMTK NO_MODULE)
+	find_package(OpenJPEG REQUIRED)
 
-	add_library(isisImageFormat_Dicom SHARED imageFormat_Dicom.cpp imageFormat_DicomParser.cpp)
-	target_link_libraries(isisImageFormat_Dicom ${DCMTK_LIBRARIES} ${isis_core_lib})
+	add_library(isisImageFormat_Dicom SHARED imageFormat_Dicom.cpp imageFormat_DicomParser.cpp imageFormat_DicomDictionary.cpp)
+	target_include_directories(isisImageFormat_Dicom PRIVATE ${OPENJPEG_INCLUDE_DIRS})
+	target_link_libraries(isisImageFormat_Dicom ${DCMTK_LIBRARIES} ${isis_core_lib} ${OPENJPEG_LIBRARIES})
 	set(TARGETS ${TARGETS} isisImageFormat_Dicom)
 endif(ISIS_IOPLUGIN_DICOM)
 
