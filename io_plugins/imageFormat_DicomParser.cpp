@@ -3,8 +3,6 @@
 #include <boost/date_time/gregorian/gregorian.hpp>
 #include <boost/endian/buffers.hpp>
 #include <isis/core/common.hpp>
-#include <dcmtk/dcmdata/dcdict.h>
-#include <dcmtk/dcmdata/dcdicent.h>
 
 namespace isis
 {
@@ -13,15 +11,6 @@ namespace image_io
 
 namespace _internal
 {
-util::istring id2Name( const uint16_t group, const uint16_t element ){
-	char id_str[4+4+3+1];
-	sprintf(id_str,"(%04x,%04x)",group,element);
-	return id_str;
-}
-util::istring id2Name( const uint32_t id32 ){
-	return id2Name((id32&0xFFFF0000)>>16,id32&0xFFFF);
-}
-
 template<typename ST, typename DT> bool try_cast( const ST &source, DT &dest )
 {
 	bool ret = true;
@@ -159,13 +148,6 @@ bool DicomElement::endian_swap()const{
 }
 
 
-template<typename T> std::list<T> dcmtkListString2list( DcmElement *elem )
-{
-	OFString buff;
-	elem->getOFStringArray( buff );
-	return util::stringToList<T>( std::string( buff.c_str() ), '\\' );
-}
-
 template <typename S, typename V> void arrayToVecPropImp( S *array, util::PropertyMap &dest, const util::PropertyMap::PropPath &name, size_t len )
 {
 	V vector;
@@ -179,278 +161,6 @@ template <typename S> void arrayToVecProp( S *array, util::PropertyMap &dest, co
 }
 
 template<typename T> bool noLatin( const T &t ) {return t >= 127;}
-}
-
-
-/**
- * Parses the Age String
- * A string of characters with one of the following formats -- nnnD, nnnW, nnnM, nnnY;
- * where nnn shall contain the number of days for D, weeks for W, months for M, or years for Y.
- * Example - "018M" would represent an age of 18 months.
- */
-void ImageFormat_Dicom::parseAS( DcmElement *elem, const util::PropertyMap::PropPath &name, util::PropertyMap &map )
-{
-	uint16_t duration = 0;
-	OFString buff;
-	elem->getOFString( buff, 0 );
-	static boost::numeric::converter <
-	uint16_t, double,
-			boost::numeric::conversion_traits<uint16_t, double>,
-			boost::numeric::def_overflow_handler,
-			boost::numeric::RoundEven<double>
-			> double2uint16;
-
-	if ( _internal::try_cast( buff.substr( 0, buff.find_last_of( "0123456789" ) + 1 ), duration ) ) {
-		switch ( buff.at( buff.size() - 1 ) ) {
-		case 'D':
-		case 'd':
-			break;
-		case 'W':
-		case 'w':
-			duration *= 7;
-			break;
-		case 'M':
-		case 'm':
-			duration = double2uint16( 30.436875 * duration ); // year/12
-			break;
-		case 'Y':
-		case 'y':
-			duration = double2uint16( 365.2425 * duration ); //mean length of a year
-			break;
-		default:
-			LOG( Runtime, warning )
-					<< "Missing age-type-letter, assuming days";
-		}
-		map.setValueAs( name, duration );
-		LOG( Debug, verbose_info )
-				<< "Parsed age for " << name << "(" <<  buff << ")" << " as " << duration << " days";
-	} else
-		LOG( Runtime, warning )
-				<< "Cannot parse age string \"" << buff << "\" in the field \"" << name << "\"";
-}
-
-/**
- * Parses the Time string
- * For duration (VR=TM):
- * A string of characters of the format hhmmss.frac; where hh contains hours (range "00" - "23"),
- * mm contains minutes (range "00" - "59"), ss contains seconds (range "00" - "59"), and frac contains
- * a fractional part of a second as small as 1 millionth of a second (range "000000" - "999999").
- * A 24 hour clock is assumed. Midnight can be represented by only "0000" since "2400" would violate the
- * hour range. The string may be padded with trailing spaces. Leading and embedded spaces are not allowed.
- * One or more of the components mm, ss, or frac may be unspecified as long as every component to the right
- * of an unspecified component is also unspecified. If frac is unspecified the preceding "." may not be included.
- * Frac shall be held to six decimal places or less to ensure its format conforms to the ANSI HISPP MSDS Time
- * common data type.
- * Examples:
- * - "070907.0705" represents a time of 7 hours, 9 minutes and 7.0705 seconds.
- * - "1010" represents a time of 10 hours, and 10 minutes.
- * - "021" is an invalid value.
- * For timestamp (VR=TM and DA) see http://dicom.nema.org/dicom/2013/output/chtml/part05/sect_6.2.html
- */
-void ImageFormat_Dicom::parseTime( DcmElement *elem, const util::PropertyMap::PropPath &name, util::PropertyMap &map,uint16_t dstID )
-{
-	OFString buff;
-	elem->getOFString( buff, 0 );
-	
-	util::PropertyValue &prop=map.setValueAs( name, buff.c_str()); // store string
-	
-	if ( prop.transform(dstID) ) { // try to convert it into timestamp or date
-		LOG( Debug, verbose_info ) << "Parsed time for " << name << "(" <<  buff << ")" << " as " << map.property(name).toString(true);
-	} else
-		LOG( Runtime, warning ) << "Cannot parse Time string \"" << buff << "\" in the field \"" << name << "\"";
-}
-
-void ImageFormat_Dicom::parseScalar( DcmElement *elem, const util::PropertyMap::PropPath &name, util::PropertyMap &map )
-{
-	switch ( elem->getVR() ) {
-	case EVR_AS: { // age string (nnnD, nnnW, nnnM, nnnY)
-		parseAS( elem, name, map );
-	}
-	break;
-	case EVR_DA: {
-		parseTime( elem, name, map, util::Value<util::date>::staticID() );
-	}
-	break;
-	case EVR_TM: {
-		parseTime( elem, name, map, util::Value<util::timestamp>::staticID() ); //duration is for milliseconds stored as decimal number
-	}
-	break;
-	case EVR_DT: {
-		parseTime( elem, name, map, util::Value<util::timestamp>::staticID() );
-	}
-	break;
-	case EVR_FL: {
-		Float32 buff;
-		elem->getFloat32( buff );
-		map.setValueAs<float>( name, buff ); //if Float32 is float its fine, if not we will get an compiler error here
-	}
-	break;
-	case EVR_FD: {
-		Float64 buff;
-		elem->getFloat64( buff );
-		map.setValueAs<double>( name, buff ); //if Float64 is double its fine, if not we will get an compiler error here
-	}
-	break;
-	case EVR_DS: { //Decimal String (can be floating point)
-		OFString buff;
-		elem->getOFString( buff, 0 );
-		map.setValueAs<double>( name, std::stod( buff.c_str() ) );
-	}
-	break;
-	case EVR_SL: { //signed long
-		Sint32 buff;
-		elem->getSint32( buff );
-		map.setValueAs<int32_t>( name, buff ); //seems like Sint32 is not allways int32_t, so enforce it
-	}
-	break;
-	case EVR_SS: { //signed short
-		Sint16 buff;
-		elem->getSint16( buff );
-		map.setValueAs<int16_t>( name, buff );
-	}
-	break;
-	case EVR_UL: { //unsigned long
-		Uint32 buff;
-		elem->getUint32( buff );
-		map.setValueAs<uint32_t>( name, buff );
-	}
-	break;
-	case EVR_US: { //unsigned short
-		Uint16 buff;
-		elem->getUint16( buff );
-		map.setValueAs<uint16_t>( name, buff );
-	}
-	break;
-	case EVR_IS: { //integer string
-		OFString buff;
-		elem->getOFString( buff, 0 );
-		map.setValueAs<int32_t>( name, std::stoi( buff.c_str() ) );
-	}
-	break;
-	case EVR_AE: //Application Entity (string)
-	case EVR_CS: // Code String (string)
-	case EVR_LT: //long text
-	case EVR_SH: //short string
-	case EVR_LO: //long string
-	case EVR_ST: //short text
-	case EVR_UT: //Unlimited Text
-	case EVR_UI: //Unique Identifier [0-9\.]
-	case EVR_AT: // @todo find a better way to interpret the value (see http://northstar-www.dartmouth.edu/doc/idl/html_6.2/Value_Representations.html)
-	case EVR_PN: { //Person Name
-		OFString buff;
-		elem->getOFString( buff, 0 );
-		map.setValueAs<std::string>( name, buff.c_str() );
-	}
-	break;
-	case EVR_UN: //Unknown, see http://www.dabsoft.ch/dicom/5/6.2.2/
-	case EVR_OB:{ //bytes .. if it looks like text, use it as text
-		//@todo do a better sanity check
-		Uint8 *buff;
-		elem->getUint8Array( buff ); // get the raw data
-		Uint32 len = elem->getLength();
-		const size_t nonLat = std::count_if( buff, buff + len, _internal::noLatin<Uint8> );
-
-		if( nonLat ) { // if its not "just text" encode it as base256
-			LOG( Runtime, info ) << "Using " << len << " bytes from " << name << "("
-								 << const_cast<DcmTag &>( elem->getTag() ).getVRName() << ") as base256 because there are "
-								 << nonLat << " non latin characters in it";
-			std::stringstream o;
-			std::copy( buff, buff + len, std::ostream_iterator<Uint16>( o << std::hex ) );
-			map.setValueAs<std::string>( name, o.str() ); //stuff it into a string
-		} else
-			map.setValueAs<std::string>( name, std::string( ( char * )buff, len ) ); //stuff it into a string
-	}
-	break;
-	case EVR_OW: { //16bit words - parse as base256 strings
-		Uint16 *buff;
-		elem->getUint16Array( buff ); // get the raw data
-		Uint32 len = elem->getLength();
-		std::stringstream o;
-		std::copy( buff, buff + len, std::ostream_iterator<Uint16>( o << std::hex ) );
-		map.setValueAs<std::string>( name, o.str() ); //stuff it into a string
-	}
-	break;
-	default: {
-		OFString buff;
-		elem->getOFString( buff, 0 );
-		LOG( Runtime, notice ) << "Don't know how to handle Value Representation " << util::MSubject(const_cast<DcmTag &>( elem->getTag() ).getVRName()) << 
-		" of " << std::make_pair(name ,buff);
-	}
-	break;
-	}
-}
-
-void ImageFormat_Dicom::parseList( DcmElement *elem, const util::PropertyMap::PropPath &name, util::PropertyMap &map )
-{
-	OFString buff;
-	size_t len = elem->getVM();
-
-	switch ( elem->getVR() ) {
-	case EVR_FL: {
-		Float32 *buff;
-		elem->getFloat32Array( buff );
-		map.setValueAs( name, util::dlist( buff, buff + len ) );
-	}
-	break;
-	case EVR_FD: {
-		Float64 *buff;
-		elem->getFloat64Array( buff );
-		map.setValueAs( name, util::dlist( buff, buff + len ) );
-	}
-	break;
-	case EVR_IS: {
-		map.setValueAs( name, _internal::dcmtkListString2list<int>( elem ));
-	}
-	break;
-	case EVR_SL: {
-		Sint32 *buff;
-		elem->getSint32Array( buff );
-		map.setValueAs( name, util::ilist( buff, buff + len ));
-	}
-	break;
-	case EVR_US: {
-		Uint16 *buff;
-		elem->getUint16Array( buff );
-		map.setValueAs( name, util::ilist( buff, buff + len ));
-	}
-	break;
-	case EVR_SS: {
-		Sint16 *buff;
-		elem->getSint16Array( buff );
-		map.setValueAs( name, util::ilist( buff, buff + len ));
-	}
-	break;
-	case EVR_CS: // Code String (string)
-	case EVR_SH: //short string
-	case EVR_LT: //long text
-	case EVR_LO: //long string
-	case EVR_DA: //date string
-	case EVR_TM: //time string
-	case EVR_UT: //Unlimited Text
-	case EVR_ST: { //short text
-		map.setValueAs( name, _internal::dcmtkListString2list<std::string>( elem ));
-	}
-	break;
-	case EVR_DS: {
-		map.setValueAs( name, _internal::dcmtkListString2list<double>( elem ));
-	}
-	break;
-	case EVR_AS:
-	case EVR_UL:
-	case EVR_AE: //Application Entity (string)
-	case EVR_UI: //Unique Identifier [0-9\.]
-	case EVR_PN:
-	default: {
-		elem->getOFStringArray( buff );
-		LOG( Runtime, notice ) << "Implement me "
-							   << name << "("
-							   << const_cast<DcmTag &>( elem->getTag() ).getVRName() << "):"
-							   << buff;
-	}
-	break;
-	}
-
-	LOG( Debug, verbose_info ) << "Parsed the list " << name << " as " << map.property( name );
 }
 
 void ImageFormat_Dicom::parseCSA(const data::ValueArray<uint8_t> &data, util::PropertyMap &map, std::list<util::istring> dialects )
@@ -468,24 +178,24 @@ size_t ImageFormat_Dicom::parseCSAEntry(const uint8_t *at, util::PropertyMap &ma
 	pos += 0x40;
 	if(name[0]==0)
 		throw std::logic_error("empty CSA entry name");
-	/*Sint32 &vm=*((Sint32*)array+pos);*/
-	pos += sizeof( Sint32 );
+	/*int32_t &vm=*((int32_t*)array+pos);*/
+	pos += sizeof( int32_t );
 	const char *const vr = ( char * )at + pos;
 	pos += 0x4;
-	/*Sint32 syngodt=endian<Uint8,Uint32>(array+pos);*/
-	pos += sizeof( Sint32 );
-	const Sint32 nitems = ((boost::endian::little_int32_buf_t*)( at + pos ))->value();
-	pos += sizeof( Sint32 );
+	/*int32_t syngodt=endian<Uint8,Uint32>(array+pos);*/
+	pos += sizeof( int32_t );
+	const int32_t nitems = ((boost::endian::little_int32_buf_t*)( at + pos ))->value();
+	pos += sizeof( int32_t );
 	static const std::string whitespaces( " \t\f\v\n\r" );
 	
 	if ( nitems ) {
-		pos += sizeof( Sint32 ); //77
+		pos += sizeof( int32_t ); //77
 		util::slist ret;
 
 		for ( unsigned short n = 0; n < nitems; n++ ) {
-			Sint32 len = ((boost::endian::little_int32_buf_t*)( at + pos ))->value();
-			pos += sizeof( Sint32 );//the length of this element
-			pos += 3 * sizeof( Sint32 ); //whatever
+			int32_t len = ((boost::endian::little_int32_buf_t*)( at + pos ))->value();
+			pos += sizeof( int32_t );//the length of this element
+			pos += 3 * sizeof( int32_t ); //whatever
 
 			if ( !len )continue;
 
@@ -510,9 +220,9 @@ size_t ImageFormat_Dicom::parseCSAEntry(const uint8_t *at, util::PropertyMap &ma
 			}
 
 			pos += (
-					   ( len + sizeof( Sint32 ) - 1 ) / sizeof( Sint32 )
+					   ( len + sizeof( int32_t ) - 1 ) / sizeof( int32_t )
 				   ) *
-				   sizeof( Sint32 );//increment pos by len aligned to sizeof(Sint32)*/
+				   sizeof( int32_t );//increment pos by len aligned to sizeof(int32_t)*/
 		}
 
 		try {
@@ -533,7 +243,7 @@ size_t ImageFormat_Dicom::parseCSAEntry(const uint8_t *at, util::PropertyMap &ma
 		}
 	} else {
 		LOG( Debug, verbose_info ) << "Skipping empty CSA entry " << name;
-		pos += sizeof( Sint32 );
+		pos += sizeof( int32_t );
 	}
 
 	return pos;
@@ -580,65 +290,6 @@ bool ImageFormat_Dicom::parseCSAValueList( const util::slist &val, const util::P
 	}
 
 	return true;
-}
-
-DcmObject *ImageFormat_Dicom::dcmObject2PropMap( DcmObject *master_obj, util::PropertyMap &map, std::list<util::istring> dialects )const
-{
-// 	const std::string  old_loc=std::setlocale(LC_ALL,"C");
-// 	DcmObject *img=nullptr;
-// 	for ( DcmObject *obj = master_obj->nextInContainer( NULL ); obj; obj = master_obj->nextInContainer( obj ) ) {
-// 		const DcmTagKey &tag = obj->getTag();
-// 
-// 		if ( tag == DcmTagKey( 0x7fe0, 0x0010 ) ){
-// 			assert(!img);
-// 			img=obj;
-// 		} else if ( tag == DcmTagKey( 0x0029, 0x1010 ) || tag == DcmTagKey( 0x0029, 0x1020 ) ) { //SIEMENS CSA HEADER
-// 			boost::optional< util::PropertyValue& > known = map.queryProperty( "Private Code for (0029,1000)-(0029,10ff)" );
-// 
-// 			if( known && known->as<std::string>() == "SIEMENS CSA HEADER" ) {
-// 				if(!checkDialect(dialects,"nocsa")){
-// 					const util::PropertyMap::PropPath name = ( tag == DcmTagKey( 0x0029, 0x1010 ) ) ? "SIEMENS CSA HEADER" : "CSASeriesHeaderInfo";
-// 					DcmElement *elem = dynamic_cast<DcmElement *>( obj );
-// 					try{
-// 						parseCSA( elem, map.touchBranch( name ), dialects );
-// 					} catch(std::exception &e){
-// 						LOG( Runtime, error ) << "Error parsing CSA data ("<< util::MSubject(e.what()) <<"). Deleting " << util::MSubject(name);
-// 					}
-// 				}
-// 			} else {
-// 				LOG( Runtime, warning ) << "Ignoring entry " << tag.toString() << ", binary format " << *known << " is not known";
-// 			}
-// 		} else if ( tag == DcmTagKey( 0x0029, 0x0020 ) ) { //MedComHistoryInformation
-// 			//@todo special handling needed
-// 			LOG( Debug, info ) << "Ignoring MedComHistoryInformation at " << tag.toString();
-// 		} else if ( obj->isLeaf() ) { // common case
-// 			if ( obj->getTag() == DcmTag( 0x0008, 0x0032 ) ) {
-// 				OFString buff;
-// 				dynamic_cast<DcmElement *>( obj )->getOFString( buff, 0 );
-// 
-// 				if( buff.length() < 8 ) {
-// 					LOG( Runtime, warning ) << "The Acquisition Time " << util::MSubject( buff ) << " is not precise enough, ignoring it";
-// 					continue;
-// 				}
-// 			}
-// 
-// 			DcmElement *elem = dynamic_cast<DcmElement *>( obj );
-// 			const size_t mult = obj->getVM();
-// 
-// 			if ( mult == 0 )
-// 				LOG( Runtime, verbose_info ) << "Skipping empty Dicom-Tag " << util::MSubject( tag2Name( tag ) );
-// 			else if ( mult == 1 )
-// 				parseScalar( elem, _internal::tag2Name( tag ), map );
-// 			else
-// 				parseList( elem, tag2Name( tag ), map );
-// 		} else {
-// 			DcmObject *buff=dcmObject2PropMap( obj, map.touchBranch( tag2Name( tag ) ), dialects );
-// 			assert(!(img && buff));
-// 			if(buff)img=buff;
-// 		}
-// 	}
-// 	std::setlocale(LC_ALL,old_loc.c_str());
-// 	return img;
 }
 
 namespace _internal{

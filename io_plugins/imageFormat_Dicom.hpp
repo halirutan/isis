@@ -21,13 +21,6 @@
 #define IMAGEFORMAT_DICOM_HPP
 
 #include <isis/core/io_interface.h>
-
-#define HAVE_CONFIG_H // this is needed for autoconf configured dcmtk (e.g. the debian package)
-
-#include <dcmtk/dcmdata/dcfilefo.h>
-#include <dcmtk/dcmdata/dcdict.h>
-#include <dcmtk/config/osconfig.h>
-#include <dcmtk/dcmdata/dcistrma.h>
 #include <boost/endian/buffers.hpp>
 #include <functional>
 
@@ -38,6 +31,10 @@ namespace image_io
 namespace _internal{
 util::istring id2Name( const uint16_t group, const uint16_t element );
 util::istring id2Name( const uint32_t id32 );
+
+#ifdef HAVE_OPENJPEG
+data::Chunk getj2k(data::ByteArray bytes);
+#endif //HAVE_OPENJPEG
 
 template <boost::endian::order Order> struct Tag{
 	boost::endian::endian_buffer<Order, int_least16_t, 16> group,element;
@@ -110,24 +107,17 @@ public:
 
 class ImageFormat_Dicom: public FileFormat
 {
-	static void parseAS( DcmElement *elem, const util::PropertyMap::PropPath &name, util::PropertyMap &map );
-	static void parseTime( DcmElement *elem, const util::PropertyMap::PropPath &name, util::PropertyMap &map,uint16_t dstID );
 	static size_t parseCSAEntry( const uint8_t *at, isis::util::PropertyMap &map, std::list<util::istring> dialects );
 	static bool parseCSAValue( const std::string &val, const util::PropertyMap::PropPath &name, const util::istring &vr, isis::util::PropertyMap &map );
 	static bool parseCSAValueList( const isis::util::slist &val, const util::PropertyMap::PropPath &name, const util::istring &vr, isis::util::PropertyMap &map );
 	static data::Chunk readMosaic( data::Chunk source );
-	std::map<DcmTagKey, util::PropertyMap::PropPath> dictionary;
 protected:
 	util::istring suffixes( io_modes modes = both )const override;
 public:
 	ImageFormat_Dicom();
-	void addDicomDict( DcmDataDictionary &dict );
 	static const char dicomTagTreeName[];
 	static const char unknownTagName[];
 	static void parseCSA( const data::ValueArray<uint8_t> &data, isis::util::PropertyMap &map, std::list<util::istring> dialects );
-	static void parseScalar( DcmElement *elem, const util::PropertyMap::PropPath &name, util::PropertyMap &map );
-	static void parseList( DcmElement *elem, const util::PropertyMap::PropPath &name, isis::util::PropertyMap &map );
-	DcmObject *dcmObject2PropMap( DcmObject *master_obj, isis::util::PropertyMap &map, std::list<util::istring> dialects )const;
 	static void sanitise( util::PropertyMap &object, std::list<util::istring> dialect );
 	std::string getName()const override;
 	std::list<util::istring> dialects()const override;

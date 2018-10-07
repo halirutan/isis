@@ -222,12 +222,19 @@ endif(ISIS_IOPLUGIN_FLIST)
 # Dicom
 ############################################################
 if(ISIS_IOPLUGIN_DICOM)
-	find_package(DCMTK NO_MODULE)
-	find_package(OpenJPEG REQUIRED)
+	find_package(OpenJPEG QUIET)
 
-	add_library(isisImageFormat_Dicom SHARED imageFormat_Dicom.cpp imageFormat_DicomParser.cpp imageFormat_DicomDictionary.cpp)
-	target_include_directories(isisImageFormat_Dicom PRIVATE ${OPENJPEG_INCLUDE_DIRS})
-	target_link_libraries(isisImageFormat_Dicom ${DCMTK_LIBRARIES} ${isis_core_lib} ${OPENJPEG_LIBRARIES})
+	add_library(isisImageFormat_Dicom SHARED imageFormat_Dicom.cpp imageFormat_DicomParser.cpp imageFormat_DicomDictionary.cpp )
+	
+	if(OPENJPEG_FOUND)
+		target_compile_definitions(isisImageFormat_Dicom PRIVATE "HAVE_OPENJPEG")
+		target_sources(isisImageFormat_Dicom PRIVATE imageFormat_DicomJ2k.cpp)
+		target_include_directories(isisImageFormat_Dicom PRIVATE ${OPENJPEG_INCLUDE_DIRS})
+		target_link_libraries(isisImageFormat_Dicom PRIVATE ${isis_core_lib} ${OPENJPEG_LIBRARIES})
+	else(OPENJPEG_FOUND)
+		message(WARNING "OpenJPEG not found, support for j2k-streams in dicom import (transfer syntax 1.2.840.10008.1.2.4.90) disabled")
+		target_link_libraries(isisImageFormat_Dicom PRIVATE ${isis_core_lib})
+	endif(OPENJPEG_FOUND)
 	set(TARGETS ${TARGETS} isisImageFormat_Dicom)
 endif(ISIS_IOPLUGIN_DICOM)
 

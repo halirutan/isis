@@ -1,25 +1,9 @@
 #include "imageFormat_Dicom.hpp"
 #include <isis/core/common.hpp>
 #include <isis/core/istring.hpp>
-#include <dcmtk/dcmimgle/dcmimage.h>
-#include <dcmtk/dcmimage/diregist.h> //for color support
-#include <dcmtk/dcmdata/dcdicent.h>
-#include <dcmtk/dcmdata/dcistrmb.h>
-#include <dcmtk/oflog/config.h>
-#include <dcmtk/oflog/tstring.h>
-#include <dcmtk/oflog/spi/logevent.h>
-#include <openjpeg.h>
-
-#include <dcmtk/dcmjpeg/djdecode.h>    /* for dcmjpeg decoders */
-#include <dcmtk/dcmjpeg/dipijpeg.h>    /* for dcmimage JPEG plugin */
 
 #include <boost/iostreams/copy.hpp>
-#include <dcmtk/dcmdata/dcpixel.h>
-#include <dcmtk/dcmdata/dcpixseq.h>
-
 #include <boost/iostreams/stream.hpp>
-#include <thread>
-
 
 namespace isis
 {
@@ -27,40 +11,14 @@ namespace image_io
 {
 namespace _internal
 {
-typedef  boost::iostreams::basic_array_source<uint8_t> jp2stream_adapter; // must be compatible to std::streambuf
-void jp2_err(const char *msg, void *client_data)
-{
-	std::string no_endl_msg(msg);
-	no_endl_msg=no_endl_msg.substr(0,no_endl_msg.find_last_not_of("\r\n")+1);
-    LOG(Runtime,error) << "Got error " << no_endl_msg << " when decoding jp2 stream";
+util::istring id2Name( const uint16_t group, const uint16_t element ){
+	char id_str[4+4+3+1];
+	sprintf(id_str,"(%04x,%04x)",group,element);
+	return id_str;
 }
-void jp2_warn(const char *msg, void *client_data)
-{
-	std::string no_endl_msg(msg);
-	no_endl_msg=no_endl_msg.substr(0,no_endl_msg.find_last_not_of("\r\n")+1);
-    LOG(Runtime,warning) << "Got warning " << no_endl_msg << " when decoding jp2 stream";
+util::istring id2Name( const uint32_t id32 ){
+	return id2Name((id32&0xFFFF0000)>>16,id32&0xFFFF);
 }
-void jp2_info(const char *msg, void *client_data)
-{
-	std::string no_endl_msg(msg);
-	no_endl_msg=no_endl_msg.substr(0,no_endl_msg.find_last_not_of("\r\n")+1);
-	LOG(Runtime,info) << "Got info " << no_endl_msg << " when decoding jp2 stream";
-}
-OPJ_SIZE_T opj_stream_read_mem(void * p_buffer, OPJ_SIZE_T p_nb_bytes, void * p_user_data)
-{
-	return reinterpret_cast<boost::iostreams::stream<jp2stream_adapter>*>(p_user_data)->read((uint8_t*)p_buffer,p_nb_bytes).gcount(); 
-}
-OPJ_OFF_T opj_stream_skip_mem(OPJ_OFF_T p_nb_bytes, void * p_user_data){
-	auto stream=reinterpret_cast<boost::iostreams::stream<jp2stream_adapter>*>(p_user_data);
-	stream->ignore(p_nb_bytes);
-	return stream->tellg();
-}
-OPJ_BOOL opj_stream_seek_mem(OPJ_OFF_T p_nb_bytes, void * p_user_data){
-	auto stream=reinterpret_cast<boost::iostreams::stream<jp2stream_adapter>*>(p_user_data);
-	stream->seekg(p_nb_bytes,std::ios_base::beg); 
-	return stream->good();
-}
-
 util::PropertyMap readStream(DicomElement &token,size_t stream_len,std::multimap<uint32_t,data::ValueArrayReference> &data_elements);
 util::PropertyMap readItem(DicomElement &token,std::multimap<uint32_t,data::ValueArrayReference> &data_elements){
 	assert(token.getID32()==0xFFFEE000);//must be an item-tag
@@ -149,81 +107,6 @@ template<typename T> data::ValueArrayReference repackValueArray(data::ValueArray
 }
 class DicomChunk : public data::Chunk
 {
-	static data::Chunk getj2k(data::ByteArray bytes){
-		// set up stream
-		const void *p=bytes.getRawAddress().get();
-		const uint8_t *start=bytes.begin(), *end=bytes.end();
-
-		boost::iostreams::stream<_internal::jp2stream_adapter> stream;
-		stream.open(_internal::jp2stream_adapter(start,end));
-
-		opj_stream_t *l_stream = opj_stream_default_create(true);
-		opj_stream_set_user_data(l_stream,&stream,nullptr);
-		opj_stream_set_user_data_length(l_stream,bytes.getLength());
-
-		auto l_codec = opj_create_decompress(OPJ_CODEC_J2K);
-		
-		opj_set_info_handler(l_codec, jp2_info, 00);
-		opj_set_warning_handler(l_codec, jp2_warn, 00);
-		opj_set_error_handler(l_codec, jp2_err, 00);
-		
-		const int threads=std::thread::hardware_concurrency();
-		if(threads)
-			opj_codec_set_threads(l_codec, std::min(threads,4));
-
-		opj_stream_set_read_function(l_stream, _internal::opj_stream_read_mem);
-		opj_stream_set_skip_function(l_stream, _internal::opj_stream_skip_mem);
-		// see https://github.com/uclouvain/openjpeg/issues/613
-		// opj_stream_set_seek_function(l_stream, _internal::opj_stream_seek_mem);
-
-
-		/* set decoding parameters to default values */
-		opj_dparameters_t parameters;
-		opj_set_default_decoder_parameters(&parameters);
-		
-		if (!opj_setup_decoder(l_codec, &parameters)) {
-			fprintf(stderr, "ERROR -> j2k_dump: failed to setup the decoder\n");
-		}
-
-		opj_image_t* image = NULL;
-		/* Read the main header of the codestream and if necessary the JP2 boxes*/
-		if (! opj_read_header(l_stream, l_codec, &image)) {
-			fprintf(stderr, "ERROR -> opj_decompress: failed to read the header\n");
-			opj_stream_destroy(l_stream);
-			opj_destroy_codec(l_codec);
-			opj_image_destroy(image);
-		}
-		
-		if (!(opj_decode(l_codec, l_stream, image) && opj_end_decompress(l_codec,   l_stream))) {
-			fprintf(stderr, "ERROR -> opj_decompress: failed to decode image!\n");
-			opj_destroy_codec(l_codec);
-			opj_stream_destroy(l_stream);
-			opj_image_destroy(image);
-		}
-        if (image->comps[0].data == NULL) {
-            fprintf(stderr, "ERROR -> opj_decompress: no image data!\n");
-            opj_destroy_codec(l_codec);
-            opj_stream_destroy(l_stream);
-            opj_image_destroy(image);
-        }
-        if (image->color_space != OPJ_CLRSPC_SYCC
-                && image->numcomps == 3 && image->comps[0].dx == image->comps[0].dy
-                && image->comps[1].dx != 1) {
-            image->color_space = OPJ_CLRSPC_SYCC;
-        } else if (image->numcomps <= 2) {
-            image->color_space = OPJ_CLRSPC_GRAY;
-        }
-		
-		if(image->numcomps!=1)
-			FileFormat::throwGenericError("Only grayscale j2k data supportet");
-
-		
-		if(image->comps[0].prec>8){
-			return data::MemChunk<uint16_t>(image->comps[0].data, image->comps[0].w,image->comps[0].h);
-		} else {
-			return data::MemChunk<uint8_t>(image->comps[0].data, image->comps[0].w,image->comps[0].h);
-		} 
-	}
 	data::Chunk getUncompressedPixel(data::ValueArrayBase &data,const util::PropertyMap &props){
 		auto rows=props.getValueAs<uint32_t>("Rows");
 		auto columns=props.getValueAs<uint32_t>("Columns");
@@ -263,14 +146,17 @@ public:
 	{
 		assert(data_elements.size()==1);
 		data::ValueArrayBase &data=*data_elements.front();
+#ifdef HAVE_OPENJPEG
 		if(transferSyntax=="1.2.840.10008.1.2.4.90"){ //JPEG 2K
 			assert(data_elements.front()->getTypeID()==data::ByteArray::staticID());
-			static_cast<data::Chunk&>(*this)=getj2k(dynamic_cast<const data::ValueArray<uint8_t>&>(data));
+			static_cast<data::Chunk&>(*this)=_internal::getj2k(dynamic_cast<const data::ValueArray<uint8_t>&>(data));
 			
 			LOG(Runtime,info) 
 				<< "Created " << this->getSizeAsString() << "-Image of type " << this->getTypeName() 
 				<< " from a " << data.getLength() << " bytes j2k stream";
-		} else {
+		} else 
+#endif //HAVE_OPENJPEG
+		{
 			static_cast<data::Chunk&>(*this)=getUncompressedPixel(data,props);
 			LOG(Runtime,info) 
 				<< "Created " << this->getSizeAsString() << "-Image of type " << this->getTypeName() 
@@ -280,19 +166,6 @@ public:
 	}
 };
 
-class DcmtkLogger : public dcmtk::log4cplus::Appender{
-	std::set<dcmtk::log4cplus::tstring> ignores;
-public:
-	DcmtkLogger(){
-		ignores.insert("no pixel data found in DICOM dataset");
-	}
-	virtual void close(){}
-protected:
-	virtual void append(const dcmtk::log4cplus::spi::InternalLoggingEvent& event){
-		const dcmtk::log4cplus::tstring &msg=event.getMessage();
-		LOG_IF(ignores.find(msg)==ignores.end(),Runtime,warning) << "Got an error from dcmtk: \"" << event.getMessage() << "\"";
-	}
-};
 }
 
 const char ImageFormat_Dicom::dicomTagTreeName[] = "DICOM";
@@ -708,9 +581,11 @@ std::list< data::Chunk > ImageFormat_Dicom::load(const data::ByteArray source, s
 	const auto transferSyntax= meta_info.getValueAsOr<std::string>("TransferSyntaxUID","1.2.840.10008.1.2");
 	boost::endian::order endian;
 	if(
-		transferSyntax=="1.2.840.10008.1.2" ||  // Implicit VR Little Endian
-		transferSyntax.substr(0,19)=="1.2.840.10008.1.2.1" || // Explicit VR Little Endian
-		transferSyntax=="1.2.840.10008.1.2.4.90" //JPEG 2000 Image Compression (Lossless Only)
+		transferSyntax=="1.2.840.10008.1.2"  // Implicit VR Little Endian
+		|| transferSyntax.substr(0,19)=="1.2.840.10008.1.2.1" // Explicit VR Little Endian
+#ifdef HAVE_OPENJPEG
+		|| transferSyntax=="1.2.840.10008.1.2.4.90" //JPEG 2000 Image Compression (Lossless Only)
+#endif //HAVE_OPENJPEG
 	){ 
 		 endian=boost::endian::order::little;
 	} else if(transferSyntax=="1.2.840.10008.1.2.2"){ //explicit big endian
@@ -811,13 +686,6 @@ ImageFormat_Dicom::ImageFormat_Dicom()
 		_internal::dicom_dict[(0x6000<<16)+ i] = util::PropertyMap::PropPath("DICOM overlay info") / util::PropertyMap::PropPath(buff);
 	}
 	_internal::dicom_dict[0x60003000] = "DICOM overlay data";
-	
-
-	//hack to steal logging from dcmtk and redirect it to our own
-	dcmtk::log4cplus::Logger logger = dcmtk::log4cplus::Logger::getRoot();
-	// there shall be no logging besides me
-	logger.removeAllAppenders();
-	logger.addAppender(dcmtk::log4cplus::SharedAppenderPtr(new _internal::DcmtkLogger));
 }
 
 }
