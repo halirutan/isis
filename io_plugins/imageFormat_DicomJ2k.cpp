@@ -1,6 +1,5 @@
 #include "imageFormat_Dicom.hpp"
 #include <openjpeg.h>
-#include <boost/iostreams/stream.hpp>
 #include <thread>
 
 namespace isis
@@ -10,44 +9,61 @@ namespace image_io
 
 namespace _internal
 {
-typedef  boost::iostreams::basic_array_source<uint8_t> jp2stream_adapter; // must be compatible to std::streambuf
-void jp2_err(const char *msg, void */*client_data*/)
-{
+class ByteStream:public data::ByteArray{
+	size_t read_idx;
+public:
+	ByteStream(const data::ByteArray &src):data::ByteArray(src),read_idx(0){}
+	OPJ_SIZE_T read(void * p_buffer, OPJ_SIZE_T p_nb_bytes){
+		uint8_t *start=begin()+read_idx;
+		OPJ_OFF_T len=skip(p_nb_bytes);
+		if(len>0){
+			memcpy(p_buffer,start,len);
+			return len;
+		} else 
+			return 0;
+	}
+	OPJ_OFF_T skip(OPJ_OFF_T p_nb_bytes){
+		OPJ_OFF_T len = std::min<OPJ_OFF_T>(p_nb_bytes,getLength()-read_idx); //make sure we don't skip beyond the data block
+		if(len>0){ //negative skipping is forbidden
+			read_idx+=len;
+			return len;
+		} else 
+			return -1;//and thus an error
+	}
+	OPJ_BOOL seek(OPJ_OFF_T p_nb_bytes){
+		skip(p_nb_bytes);
+		return read_idx<getLength();
+	}
+	
+};
+void jp2_err(const char *msg, void */*client_data*/){
 	std::string no_endl_msg(msg);
 	no_endl_msg=no_endl_msg.substr(0,no_endl_msg.find_last_not_of("\r\n")+1);
     LOG(Runtime,error) << "Got error " << no_endl_msg << " when decoding jp2 stream";
 }
-void jp2_warn(const char *msg, void */*client_data*/)
-{
+void jp2_warn(const char *msg, void */*client_data*/){
 	std::string no_endl_msg(msg);
 	no_endl_msg=no_endl_msg.substr(0,no_endl_msg.find_last_not_of("\r\n")+1);
     LOG(Runtime,warning) << "Got warning " << no_endl_msg << " when decoding jp2 stream";
 }
-void jp2_info(const char *msg, void */*client_data*/)
-{
+void jp2_info(const char *msg, void */*client_data*/){
 	std::string no_endl_msg(msg);
 	no_endl_msg=no_endl_msg.substr(0,no_endl_msg.find_last_not_of("\r\n")+1);
 	LOG(Runtime,info) << "Got info " << no_endl_msg << " when decoding jp2 stream";
 }
-OPJ_SIZE_T opj_stream_read_mem(void * p_buffer, OPJ_SIZE_T p_nb_bytes, void * p_user_data)
-{
-	return reinterpret_cast<boost::iostreams::stream<jp2stream_adapter>*>(p_user_data)->read((uint8_t*)p_buffer,p_nb_bytes).gcount(); 
+OPJ_SIZE_T opj_stream_read_mem(void * p_buffer, OPJ_SIZE_T p_nb_bytes, void * p_user_data){
+	return reinterpret_cast<ByteStream*>(p_user_data)->read(p_buffer,p_nb_bytes); 
 }
 OPJ_OFF_T opj_stream_skip_mem(OPJ_OFF_T p_nb_bytes, void * p_user_data){
-	auto stream=reinterpret_cast<boost::iostreams::stream<jp2stream_adapter>*>(p_user_data);
-	stream->ignore(p_nb_bytes);
-	return stream->tellg();
+	return reinterpret_cast<ByteStream*>(p_user_data)->skip(p_nb_bytes);
 }
 OPJ_BOOL opj_stream_seek_mem(OPJ_OFF_T p_nb_bytes, void * p_user_data){
-	auto stream=reinterpret_cast<boost::iostreams::stream<jp2stream_adapter>*>(p_user_data);
-	stream->seekg(p_nb_bytes,std::ios_base::beg); 
-	return stream->good();
+	return reinterpret_cast<ByteStream*>(p_user_data)->seek(p_nb_bytes);
 }
+
 data::Chunk getj2k(data::ByteArray bytes){
 	// set up stream
-	const uint8_t *start=bytes.begin(), *end=bytes.end();
-	boost::iostreams::stream<jp2stream_adapter> stream;
-	stream.open(jp2stream_adapter(start,end));
+	_internal::ByteStream stream(bytes);
 
 	struct stream_delete{
 		void operator()(opj_stream_t *p){opj_stream_destroy(p);}
