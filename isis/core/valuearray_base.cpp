@@ -142,7 +142,7 @@ ValueArrayBase::Reference ValueArrayBase::createByID( unsigned short ID, size_t 
 	const _internal::ValueArrayConverterMap::const_iterator f1 = converters().find( ID );
 	_internal::ValueArrayConverterMap::mapped_type::const_iterator f2;
 
-	// try to get a converter to convert the requestet type into itself - they 're there for all known types
+	// try to get a converter to convert the requestet type into itself - they are there for all known types
 	if( f1 != converters().end() && ( f2 = f1->second.find( ID ) ) != f1->second.end() ) {
 		const ValueArrayConverterBase &conv = *( f2->second );
 		std::unique_ptr<ValueArrayBase> ret;

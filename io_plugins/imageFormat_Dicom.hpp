@@ -83,15 +83,17 @@ class DicomElement{
 		}
 		return ret;
 	}
+	bool extendedLength()const; 
+	uint_fast8_t tagLength()const;
 public:
 	DicomElement &next(size_t position);
 	DicomElement &next();
 	bool endian_swap()const;
 	template<typename T> data::ValueArray<T> dataAs()const{
-		return dataAs<T>(getLength());
+		return dataAs<T>(getLength()/sizeof(T));
 	}
 	template<typename T> data::ValueArray<T> dataAs(size_t len)const{
-		return source.at<T>(position+2+2+2+2,len,endian_swap()); //offset by group-id, element-id, vr and length
+		return source.at<T>(position+tagLength(),len,endian_swap());
 	}
 	const uint8_t *data()const;
 	util::istring getIDString()const;
@@ -110,7 +112,7 @@ class ImageFormat_Dicom: public FileFormat
 {
 	static void parseAS( DcmElement *elem, const util::PropertyMap::PropPath &name, util::PropertyMap &map );
 	static void parseTime( DcmElement *elem, const util::PropertyMap::PropPath &name, util::PropertyMap &map,uint16_t dstID );
-	static size_t parseCSAEntry( Uint8 *at, isis::util::PropertyMap &map, std::list<util::istring> dialects );
+	static size_t parseCSAEntry( const uint8_t *at, isis::util::PropertyMap &map, std::list<util::istring> dialects );
 	static bool parseCSAValue( const std::string &val, const util::PropertyMap::PropPath &name, const util::istring &vr, isis::util::PropertyMap &map );
 	static bool parseCSAValueList( const isis::util::slist &val, const util::PropertyMap::PropPath &name, const util::istring &vr, isis::util::PropertyMap &map );
 	static data::Chunk readMosaic( data::Chunk source );
@@ -122,7 +124,7 @@ public:
 	void addDicomDict( DcmDataDictionary &dict );
 	static const char dicomTagTreeName[];
 	static const char unknownTagName[];
-	static void parseCSA( DcmElement *elem, isis::util::PropertyMap &map, std::list<util::istring> dialects );
+	static void parseCSA( const data::ValueArray<uint8_t> &data, isis::util::PropertyMap &map, std::list<util::istring> dialects );
 	static void parseScalar( DcmElement *elem, const util::PropertyMap::PropPath &name, util::PropertyMap &map );
 	static void parseList( DcmElement *elem, const util::PropertyMap::PropPath &name, isis::util::PropertyMap &map );
 	DcmObject *dcmObject2PropMap( DcmObject *master_obj, isis::util::PropertyMap &map, std::list<util::istring> dialects )const;

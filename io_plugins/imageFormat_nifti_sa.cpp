@@ -1344,7 +1344,7 @@ void ImageFormat_NiftiSa::sanitise( data::Chunk &object )
 	transformIfNotSet<uint16_t>       ( prefix + "PatientsWeight",          "subjectWeigth",      object, info );
 	transformIfNotSet<std::string>    ( prefix + "PerformingPhysiciansName", "performingPhysician", object, info );
 	transformIfNotSet<uint16_t>       ( prefix + "NumberOfAverages",        "numberOfAverages",   object, warning );
-	transformIfNotSet<uint32_t>       ( prefix + "CSAImageHeaderInfo/UsedChannelMask", "coilChannelMask", object, info );
+	transformIfNotSet<uint32_t>       ( prefix + "SIEMENS CSA HEADER/UsedChannelMask", "coilChannelMask", object, info );
 	transformIfNotSet<int16_t>        ( prefix + "FlipAngle", "flipAngle", object, warning );
 
 	if ( hasOrTell( prefix + "PatientsSex", object, info ) ) {
