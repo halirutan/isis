@@ -89,12 +89,14 @@ util::PropertyMap::PropPath DicomElement::getName()const{
 DicomElement::DicomElement(const data::ByteArray &_source, size_t _position, boost::endian::order _endian):source(_source),position(_position),endian(_endian){
 	next(position);//trigger read by calling next without moving
 }
-DicomElement &DicomElement::next(){
+bool DicomElement::next(){
 	const size_t len=getLength();
 	LOG_IF(len==0xffffffffffffffff,Debug,error) << "Doing next on " << getName() << " at " << position << " with an undefined length";
 	return next(position+len+tagLength());
 }
-DicomElement &DicomElement::next(size_t _position){
+bool DicomElement::next(size_t _position){
+	if(source.getLength()<_position+8)
+		return false;
 	position=_position;
 	switch(endian){
 		case boost::endian::order::big:
@@ -104,7 +106,7 @@ DicomElement &DicomElement::next(size_t _position){
 			tag=makeTag<boost::endian::order::little>();
 			break;
 	}
-	return *this;
+	return true;
 }
 
 
@@ -141,8 +143,8 @@ DicomElement DicomElement::next(boost::endian::order endian)const{
 }
 bool DicomElement::endian_swap()const{
 	switch(endian){
-		case boost::endian::order::big:   return (__BYTE_ORDER == __LITTLE_ENDIAN);
-		case boost::endian::order::little:return (__BYTE_ORDER == __BIG_ENDIAN);
+		case boost::endian::order::big:   return (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__);
+		case boost::endian::order::little:return (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__);
 	}
 	return false;//should never be reached
 }

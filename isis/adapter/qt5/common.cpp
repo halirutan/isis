@@ -42,9 +42,9 @@ QImage isis::qt5::makeQImage(const std::vector<data::ValueArrayBase::Reference> 
 				ret.setColor(i,qRgb(i,i,i));
 		}
 		fillQImage(ret,lines,transfer_function);
-		return ret;
 	} else 
 		LOG(Runtime,error) << "Sorry Images larger than 32768x32768 pixels are not supportet, returnung an empty QImage";
+	return ret;
 }
 QImage isis::qt5::makeQImage(const data::ValueArrayBase& slice, size_t line_length, const std::function<void (uchar *, const data::ValueArrayBase &)>& transfer_function)
 {
