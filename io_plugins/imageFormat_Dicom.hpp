@@ -83,8 +83,8 @@ class DicomElement{
 	bool extendedLength()const; 
 	uint_fast8_t tagLength()const;
 public:
-	DicomElement &next(size_t position);
-	DicomElement &next();
+	bool next(size_t position);
+	bool next();
 	bool endian_swap()const;
 	template<typename T> data::ValueArray<T> dataAs()const{
 		return dataAs<T>(getLength()/sizeof(T));

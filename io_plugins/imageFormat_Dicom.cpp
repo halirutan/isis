@@ -48,7 +48,7 @@ util::PropertyMap readStream(DicomElement &token,size_t stream_len,std::multimap
 	size_t start=token.getPosition();
 	util::PropertyMap ret;
 
-	for(;token.getPosition()-start<stream_len;token.next()){
+	do{
 		//break the loop if we find a delimiter
 		if(
 			token.getID32()==0xFFFEE00D //Item Delim. Tag
@@ -98,7 +98,7 @@ util::PropertyMap readStream(DicomElement &token,size_t stream_len,std::multimap
 				ret.touchProperty(token.getName())=*value;
 			}
 		}
-	}
+	}while(token.next() && token.getPosition()-start<stream_len);
 	return ret;
 }
 template<typename T> data::ValueArrayReference repackValueArray(data::ValueArrayBase &data){
@@ -149,7 +149,8 @@ public:
 #ifdef HAVE_OPENJPEG
 		if(transferSyntax=="1.2.840.10008.1.2.4.90"){ //JPEG 2K
 			assert(data_elements.front()->getTypeID()==data::ByteArray::staticID());
-			static_cast<data::Chunk&>(*this)=_internal::getj2k(dynamic_cast<const data::ValueArray<uint8_t>&>(data));
+			static_cast<data::Chunk&>(*this)=
+					_internal::getj2k(data.castToValueArray<uint8_t>());
 			
 			LOG(Runtime,info) 
 				<< "Created " << this->getSizeAsString() << "-Image of type " << this->getTypeName() 
