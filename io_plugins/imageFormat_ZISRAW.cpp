@@ -74,10 +74,10 @@ data::ValueArrayReference reinterpretData(const data::ByteArray &_data, int32_t 
 	}
 	return ret;
 }
-std::map<std::string,DimensionEntry> DirectoryEntryDV::getDimsMap()const{
-	std::map<std::string,DimensionEntry> ret;
+std::map<char,DimensionEntry> DirectoryEntryDV::getDimsMap()const{
+	std::map<char,DimensionEntry> ret;
 	for(auto d:dims)
-		ret[d.Dimension]=d;
+		ret[d.Dimension[0]]=d;
 	
 	return ret;
 }
@@ -129,16 +129,16 @@ ImageFormat_ZISRAW::SubBlock::SubBlock(data::ByteArray &source, const size_t off
 	image_data = data.at<uint8_t>(off+MetadataSize,DataSize);
 }
 
-std::map<std::string,_internal::DimensionEntry> ImageFormat_ZISRAW::SubBlock::getDimsInfo()const{
+std::map<char,_internal::DimensionEntry> ImageFormat_ZISRAW::SubBlock::getDimsInfo()const{
 	return DirectoryEntry.getDimsMap();
 }
 
-std::array<size_t,4> ImageFormat_ZISRAW::SubBlock::getSize()const{
-	std::map<std::string,_internal::DimensionEntry> map=getDimsInfo();
-	std::array<size_t,4> ret={
-		map["X"].StoredSize?:map["X"].size,
-		map["Y"].StoredSize?:map["Y"].size,
-		map["Z"].StoredSize?:map["Z"].size,
+std::array<int32_t,4> ImageFormat_ZISRAW::SubBlock::getSize()const{
+	std::map<char,_internal::DimensionEntry> map=getDimsInfo();
+	std::array<int32_t,4> ret={
+		map['X'].StoredSize?:map['X'].size,
+		map['Y'].StoredSize?:map['Y'].size,
+		map['Z'].StoredSize?:map['Z'].size,
 		1
 	};
 	if(!ret[2])ret[2]=1;
@@ -257,7 +257,7 @@ data::Chunk ImageFormat_ZISRAW::transferFromMosaic(std::list<SubBlock> segments,
 	std::list<std::thread> jobs;
 	for(auto &s:segments){
 		auto dims=s.getDimsInfo();
-		auto &X=dims["X"],&Y=dims["Y"];;
+		const auto &X=dims['X'],&Y=dims['Y'];;
 		const int xscale = X.StoredSize?X.size/X.StoredSize:1;
 		const int yscale = Y.StoredSize?Y.size/Y.StoredSize:1;
 		assert(X.start/xscale+xoffset>=0);
@@ -301,55 +301,58 @@ std::list<data::Chunk> ImageFormat_ZISRAW::load(
 	}
 	
 	struct { 
-		struct {size_t x,y,z;}size;
 		float pixel_size;
-		size_t mosaic_tiles;
 		unsigned short type_id;
 	}image_info;
 	memset(&image_info,0,sizeof(image_info));
 	
 	struct Pyramid{
 		Pyramid(const boost::property_tree::ptree &_xml_data):xml_data(_xml_data){}
+		Pyramid()=default;
 		std::vector<std::list<SubBlock>> tiles;
 		boost::property_tree::ptree xml_data;
 		float pyramid_factor;
+		std::string getName()const{
+			return xml_data.empty() ? std::string("_unknown_") : xml_data.get<std::string>("<xmlattr>.Name");
+		}
 		std::array<int32_t,2> getSize(){
 			std::array<int32_t,2> ret{};
 		}
 	};
 	std::vector<Pyramid> pyramids;
 
-	//get MetaData if there are some
+	//get MetaData if there are some 
 	if(header.MetadataPosition){
 		boost::property_tree::ptree meta=MetaData(source,header.MetadataPosition,dump_stream).get("ImageDocument.Metadata");
 // 		meta.print(std::cout)<< std::endl;
 		boost::property_tree::ptree image_props=meta.get_child("Information.Image");
-		image_info.size = {
-			image_props.get<size_t>("SizeX",0),
-			image_props.get<size_t>("SizeY",0),
-			image_props.get<size_t>("SizeZ",1)
-		};
-		image_info.mosaic_tiles=image_props.get<size_t>("SizeM",image_info.mosaic_tiles);
+
 		image_info.type_id = PixelTypeMapStr.at(image_props.get<std::string>("PixelType"));
-		
-		for(auto scene:meta.get_child("Information.Image.Dimensions.S.Scenes")){
-			pyramids.emplace_back(scene.second);
-			auto pyramid=scene.second.get_child_optional("PyramidInfo");
-			if(pyramid){
-				pyramids.back().tiles.resize(pyramid->get<size_t>("PyramidLayersCount")+1);
-				pyramids.back().pyramid_factor=pyramid->get<float>("MinificationFactor");
-			}
-		}
 		image_info.pixel_size = meta.get<float>("Scaling.Items.Distance.Value",1./1000)*1000;
+		
+		auto scenes= meta.get_child_optional("Information.Image.Dimensions.S.Scenes");
+		
+		if(scenes){
+			//and prepare a pyramid for each Scene
+			for(auto scene:*scenes){
+				pyramids.emplace_back(scene.second);
+				auto pyramid=scene.second.get_child_optional("PyramidInfo");
+				if(pyramid){
+					pyramids.back().tiles.resize(pyramid->get<size_t>("PyramidLayersCount")+1);
+					pyramids.back().pyramid_factor=pyramid->get<float>("MinificationFactor");
+				}
+			}
+		} else {
+			LOG(Runtime,info)<< "No pyramid header found, assuming flat image";
+			pyramids.emplace_back();
+			pyramids.back().tiles.resize(1);
+		}
 		
 	} else 
 		throwGenericError("could not find metadata");
 	
-	LOG(Runtime,info) 
-		<< "Header says its a " << image_info.size.x << "*" << image_info.size.y << " with " << pyramids.size() << " regions";
 	for(const auto &p:pyramids)
-		LOG(Runtime,info)
-			<< p.xml_data.get<std::string>("<xmlattr>.Name") <<  " has " << p.tiles.size() << " layers";
+		LOG(Runtime,info) << p.getName() <<  " has " << p.tiles.size() << " layers";
 			
 	//generate planes
 	if(header.DirectoryPosition){
@@ -363,19 +366,18 @@ std::list<data::Chunk> ImageFormat_ZISRAW::load(
 			std::list<SubBlock> segments;
 			std::map<std::string,bounds> boundaries;
 		};
-		std::map<std::string,plane> planes;
 
 		for(const _internal::DirectoryEntryDV &e:directory.entries){
 			auto dims=e.getDimsMap();
-			int scene=dims["S"].start;
+			const int scene=dims['S'].start;
 			if(e.PyramidType){
-				int scale = dims["X"].size / dims["X"].StoredSize;
-				int scaleFactor= pyramids[scene].pyramid_factor;
+				const int scale = dims['X'].size / dims['X'].StoredSize;
+				const int scaleFactor= pyramids[scene].pyramid_factor;
 				assert(scaleFactor>1);
 				int level = std::log10(scale)/std::log10(scaleFactor);
 				LOG(Runtime,verbose_info) 
 					<< "Got Pyramid segment " << std::make_pair(e.dims[0].StoredSize,e.dims[1].StoredSize) 
-					<< "-Image for " <<  pyramids[scene].xml_data.get<std::string>("<xmlattr>.Name")
+					<< "-Image for " <<  pyramids[scene].getName()
 					<< " at level " << level << " (scale: " << scale << ")";
 						
 				pyramids[scene].tiles[level].emplace_back(source,e.FilePosition,dump_stream);
@@ -383,7 +385,7 @@ std::list<data::Chunk> ImageFormat_ZISRAW::load(
 			} else {
 				LOG(Runtime,verbose_info) 
 					<< "Got base segment " << std::make_pair(e.dims[0].StoredSize,e.dims[1].StoredSize) 
-					<< "-Image for " <<  pyramids[scene].xml_data.get<std::string>("<xmlattr>.Name");
+					<< "-Image for " <<  pyramids[scene].getName();
 				pyramids[scene].tiles[0].emplace_back(source,e.FilePosition,dump_stream);
 				assert(pyramids[scene].tiles[0].back().isNormalImage());
 			}
@@ -408,7 +410,7 @@ std::list<data::Chunk> ImageFormat_ZISRAW::load(
 					ret.push_back(transferFromMosaic(pyramid.tiles[i],image_info.type_id,feedback));
 					LOG(Runtime,info) 
 						<<  ret.back().getSizeAsString() << " Image created for pyramid level " << i 
-						<< " of " << pyramid.xml_data.get<std::string>("<xmlattr>.Name")  
+						<< " of " << pyramid.getName()  
 						<< " from " << pyramid.tiles[i].size() << " tiles";
 
 	// 				ret.back().touchBranch("XML").transfer(pyramid[i].front().xml_data);
@@ -430,7 +432,7 @@ std::list<data::Chunk> ImageFormat_ZISRAW::load(
 						ret.back().setValueAs("indexOrigin",origin);
 					}
 					
-					ret.back().setValueAs("region",pyramid.xml_data.get<std::string>("<xmlattr>.Name"));
+					ret.back().setValueAs("region",pyramid.getName());
 				}
 
 			}
