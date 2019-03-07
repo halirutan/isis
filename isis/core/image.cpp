@@ -394,10 +394,11 @@ bool Image::reIndex(optional< util::slist& > rejected)
 				util::fvector3 &voxelGap = refValueAsOr( "voxelGap", util::fvector3{0, 0, inf} ); //if there is no voxelGap yet, we create it as (0,0,inf)
 
 				if ( voxelGap[2] != inf ) {
-					if(! util::fuzzyEqual( voxelGap[2], sliceDist, 500 ))
+					if(! util::fuzzyEqual( voxelGap[2], sliceDist, 500 )){
 						LOG(Runtime, warning )
 								<< "The existing slice distance (voxelGap[2]) " << util::MSubject( voxelGap[2] )
 								<< " differs from the distance between chunk 0 and 1, which is " << util::MSubject( sliceDist );
+					}
 				} else {
 					voxelGap[2] = sliceDist;
 					LOG( Debug, info )
@@ -412,7 +413,7 @@ bool Image::reIndex(optional< util::slist& > rejected)
 	const optional< util::fvector3& > rrow = queryValueAs<util::fvector3>( "rowVec" ),rcolumn = queryValueAs<util::fvector3>( "columnVec" );
 	if(rrow && rcolumn){
 		const util::fvector3 &row=*rrow,&column=*rcolumn;
-		LOG_IF( util::dot( row, column ) > 0.01, Runtime, warning ) << "The cosine between the columns and the rows of the image is bigger than 0.01";
+		LOG_IF( util::dot( row, column ) > 0.01f, Runtime, warning ) << "The cosine between the columns and the rows of the image is bigger than 0.01";
 		const util::fvector3 crossVec = util::fvector3({ //we could use their cross-product as sliceVector
 											row[1] * column[2] - row[2] * column[1],
 											row[2] * column[0] - row[0] * column[2],
@@ -1042,7 +1043,7 @@ std::string Image::identify ( bool withpath, bool withdate )const
 {
 	LOG_IF(withpath && !(hasProperty("source")||getChunkAt(0).hasProperty("source")),Runtime,warning) << "Asking for the path in an image that has no \"source\"-property";
 	_internal::SortedChunkList::getproplist source("source"),seqNum("sequenceNumber"),seqDesc("sequenceDescription"),seqStart("sequenceStart");
-	seqNum(*this);seqDesc(*this);seqStart(*this),source(*this);
+	seqNum(*this);seqDesc(*this);seqStart(*this);source(*this);
 	return set.identify(withpath,withdate,source, seqNum,seqDesc,seqStart);
 }
 

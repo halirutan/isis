@@ -1,6 +1,7 @@
 #ifndef ZISRAW_HPP
 #define ZISRAW_HPP
 
+#include <boost/property_tree/ptree.hpp>
 #include <isis/core/io_factory.hpp>
 #include <stdint.h>
 #include <stdio.h>
@@ -24,6 +25,7 @@ namespace _internal {
 		int32_t DimensionCount;
 		std::vector<DimensionEntry> dims;
 		size_t size()const{return 32+DimensionCount*20;}
+		std::map< char, DimensionEntry > getDimsMap()const;
 	};
 
 	template<typename T> void getScalar(data::ByteArray &data,T &variable,size_t offset){
@@ -31,7 +33,7 @@ namespace _internal {
 	}
 	DirectoryEntryDV getDVEntry(data::ByteArray &data,size_t offset);
 	
-	util::PropertyMap getXML(data::ByteArray &data,size_t offset,size_t length, std::shared_ptr<std::ofstream> dump_stream=nullptr);
+	boost::property_tree::ptree getXML(data::ByteArray &data,size_t offset,size_t length, std::shared_ptr<std::ofstream> dump_stream=nullptr);
 	
 	template<typename D> data::ValueArray<util::color<D>> color_reshuffle(const data::ValueArray<D> &data){
 		assert(data.getLength()%3==0);
@@ -47,6 +49,11 @@ namespace _internal {
 	}
 	
 	data::ValueArrayReference reinterpretData(const data::ByteArray &data,int32_t PixelType);
+	
+	struct bounds{
+		int32_t min=std::numeric_limits<int32_t>::max(),max=std::numeric_limits<int32_t>::min();
+		size_t size()const{return max-min+1;}
+	};
 }
 
 class ImageFormat_ZISRAW : public FileFormat{
@@ -81,35 +88,36 @@ class ImageFormat_ZISRAW : public FileFormat{
 	};
 	class MetaData:public Segment{
 		int32_t XMLSize,AttachmentSize;
-		util::PropertyMap xml_data;
+		boost::property_tree::ptree xml_data;
 	public:
 		MetaData(data::ByteArray &source, const size_t offset, std::shared_ptr<std::ofstream> dump_stream);
-		util::PropertyMap get()const;
+		boost::property_tree::ptree get(std::string subtree="")const;
 	};
 	class SubBlock:public Segment{
 		int32_t MetadataSize,AttachmentSize;
 		int64_t DataSize;
 		data::ByteArray image_data;
-		_internal::DirectoryEntryDV DirectoryEntry;
 		static data::Chunk jxrRead(size_t xsize,size_t ysize,isis::data::ByteArray image_data,unsigned short isis_type,unsigned short pixel_size);
 	public:
 		SubBlock(data::ByteArray &source, const size_t offset, std::shared_ptr<std::ofstream> dump_stream);
+		static std::map<std::string,_internal::bounds> getBoundaries(const std::list<SubBlock> &segments);
+	
+		_internal::DirectoryEntryDV DirectoryEntry;
 		std::function<data::Chunk()> getChunkGenerator()const;
-		util::PropertyMap xml_data;
+		boost::property_tree::ptree xml_data;
 		bool isNormalImage()const;
 		std::string getPlaneID()const;
-		std::map<std::string,_internal::DimensionEntry> getDimsInfo()const;
-		std::array<size_t,4> getSize()const;
+		std::map< char, _internal::DimensionEntry > getDimsInfo()const;
+		std::array<int32_t,4> getSize()const;
 	};
 	class Directory:public Segment{
 	public:
 		std::vector<_internal::DirectoryEntryDV> entries;
 		Directory(data::ByteArray &source, const size_t offset);
 	};
-	void storeProperties(data::Chunk &dst,std::string plane_id);
-	void transferFromMosaic(std::list<SubBlock> segments,data::Chunk &dst, int32_t xoffset, int32_t yoffset,std::shared_ptr<util::ProgressFeedback> feedback);
+	data::Chunk transferFromMosaic(std::list<SubBlock> segments,unsigned short,std::shared_ptr<util::ProgressFeedback> feedback);
 public:
-	util::istring suffixes(isis::image_io::FileFormat::io_modes /*modes*/) const override {return ".czi";}
+	util::istring suffixes(FileFormat::io_modes /*modes*/) const override {return ".czi";}
 
 	std::list< data::Chunk > load(
 		data::ByteArray source,
@@ -120,14 +128,13 @@ public:
 
 	std::string getName() const override {return "Zeiss Integrated Software RAW";}
 
-	std::list<util::istring> dialects() const override {return {"dump_xml","nopyramid"};}
+	std::list<util::istring> dialects() const override {return {"dump_xml","nopyramid", "max16G", "max8G", "max4G"};}
 
 	void write(const data::Image &/*image*/, const std::string &/*filename*/, std::list<util::istring> /*dialects*/, std::shared_ptr<util::ProgressFeedback> /*feedback*/) override{
 		throwGenericError("not yet implemented");
 	}
 };
 
-	
 }}
 
 #endif //ZISRAW_HPP

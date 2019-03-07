@@ -1,18 +1,9 @@
 #include "imageFormat_Dicom.hpp"
 #include <isis/core/common.hpp>
 #include <isis/core/istring.hpp>
-#include <dcmtk/dcmimgle/dcmimage.h>
-#include <dcmtk/dcmimage/diregist.h> //for color support
-#include <dcmtk/dcmdata/dcdicent.h>
-#include <dcmtk/dcmdata/dcistrmb.h>
-#include <dcmtk/oflog/config.h>
-#include <dcmtk/oflog/tstring.h>
-#include <dcmtk/oflog/spi/logevent.h>
-
-#include <dcmtk/dcmjpeg/djdecode.h>    /* for dcmjpeg decoders */
-#include <dcmtk/dcmjpeg/dipijpeg.h>    /* for dcmimage JPEG plugin */
 
 #include <boost/iostreams/copy.hpp>
+#include <boost/iostreams/stream.hpp>
 
 namespace isis
 {
@@ -20,108 +11,162 @@ namespace image_io
 {
 namespace _internal
 {
+util::istring id2Name( const uint16_t group, const uint16_t element ){
+	char id_str[4+4+3+1];
+	sprintf(id_str,"(%04x,%04x)",group,element);
+	return id_str;
+}
+util::istring id2Name( const uint32_t id32 ){
+	return id2Name((id32&0xFFFF0000)>>16,id32&0xFFFF);
+}
+util::PropertyMap readStream(DicomElement &token,size_t stream_len,std::multimap<uint32_t,data::ValueArrayReference> &data_elements);
+util::PropertyMap readItem(DicomElement &token,std::multimap<uint32_t,data::ValueArrayReference> &data_elements){
+	assert(token.getID32()==0xFFFEE000);//must be an item-tag
+	size_t len=token.getLength();
+	token.next(token.getPosition()+8);
+	return readStream(token,len,data_elements);
+}
+void readDataItems(DicomElement &token,std::multimap<uint32_t,data::ValueArrayReference> &data_elements){
+	const uint32_t id=token.getID32();
+	
+	bool wide= (token.getVR()=="OW");
+	
+	for(token.next(token.getPosition()+8+4);token.getID32()==0xFFFEE000;token.next()){ //iterate through items and store them
+		const size_t len=token.getLength();
+		if(len){
+			LOG(Debug,info) << "Found data item with " << len << " bytes at " << token.getPosition();
+			if(wide)
+				data_elements.insert({id,token.dataAs<uint16_t>()});
+			else
+				data_elements.insert({id,token.dataAs<uint8_t>()});
+		} else 
+			LOG(Debug,info) << "Ignoring zero length data item at " << token.getPosition();
+	}
+	assert(token.getID32()==0xFFFEE0DD);//we expect a sequence delimiter (will be eaten by the calling loop)
+}
+util::PropertyMap readStream(DicomElement &token,size_t stream_len,std::multimap<uint32_t,data::ValueArrayReference> &data_elements){
+	size_t start=token.getPosition();
+	util::PropertyMap ret;
+
+	do{
+		//break the loop if we find a delimiter
+		if(
+			token.getID32()==0xFFFEE00D //Item Delim. Tag
+		){ 
+			token.next(token.getPosition()+8);
+			break;
+		}
+
+		const std::string vr=token.getVR();
+		if(vr=="OB" || vr=="OW"){
+			const uint32_t len=token.getLength();
+			if(len==0xFFFFFFFF){ // itemized data of undefined length
+				readDataItems(token,data_elements);
+			} else {
+				std::multimap<uint32_t,data::ValueArrayReference>::iterator inserted;
+				if(vr=="OW")
+					inserted=data_elements.insert({token.getID32(),token.dataAs<uint16_t>()});
+				else
+					inserted=data_elements.insert({token.getID32(),token.dataAs<uint8_t>()});
+				
+				LOG(Debug,info) 
+					<< "Found " << inserted->second->getTypeName() << "-data for " << token.getIDString() << " at " << token.getPosition()
+					<< " it is " <<token.getLength() << " bytes long";
+			}
+		}else if(vr=="SQ"){ //explicit SQ (4 bytes tag-id + 2bytes "SQ" + 2bytes reserved)
+			//next 4 bytes are the length of the sequence
+			uint32_t len=token.getLength();
+			const auto name=token.getName();
+			
+			//we expect the sequence start token
+			token.next(token.getPosition()+8+4);
+			LOG_IF(len==0xffffffff,Debug,verbose_info) << "Sequence of undefined length found (" << name << "), looking for items at " << token.getPosition();
+			LOG_IF(len!=0xffffffff,Debug,verbose_info) << "Sequence of length " << len << " found (" << name << "), looking for items at " << token.getPosition();
+			size_t start=token.getPosition();
+			//load items (which themself again are made of tags)
+			while(token.getPosition()-start<len && token.getID32()!=0xFFFEE0DD){ //break the loop when we find the sequence delimiter tag or reach the end
+				assert(token.getID32()==0xFFFEE000);//must be an item-tag
+				const size_t item_len=token.getLength();
+				token.next(token.getPosition()+8);
+				util::PropertyMap subtree=readStream(token,item_len,data_elements);
+				ret.touchBranch(name).transfer(subtree);
+			}
+			LOG(Debug,verbose_info) << "Sequence " << name << " finished, continuing at " << token.getPosition()+token.getLength()+8;
+		}else{
+			auto value=token.getValue();
+			if(!value.isEmpty()){
+				ret.touchProperty(token.getName())=*value;
+			}
+		}
+	}while(token.next() && token.getPosition()-start<stream_len);
+	return ret;
+}
+template<typename T> data::ValueArrayReference repackValueArray(data::ValueArrayBase &data){
+	const auto new_ptr=std::static_pointer_cast<T>(data.getRawAddress());
+	return data::ValueArray<T>(new_ptr,data.getLength());
+}
 class DicomChunk : public data::Chunk
 {
-	template<typename TYPE> DicomChunk(TYPE *dat,size_t width, size_t height ):data::Chunk( data::MemChunk<TYPE>(width, height) ) {
-		LOG( Debug, verbose_info )
-				<< "Copying greyscale pixeldata of into " << dat << " (" << data::ValueArray<TYPE>::staticName() << ")" ;
-		asValueArrayBase().copyFromMem<TYPE>(dat,width*height);
-	}
-	template<typename TYPE>
-	static data::Chunk *copyColor( TYPE **source, size_t width, size_t height ) {
-		const size_t pixels = width*height;
-		data::ValueArray<util::color<TYPE> > dest(pixels);
+	data::Chunk getUncompressedPixel(data::ValueArrayBase &data,const util::PropertyMap &props){
+		auto rows=props.getValueAs<uint32_t>("Rows");
+		auto columns=props.getValueAs<uint32_t>("Columns");
+		//Number of Frames: 0028,0008
+		
+		//repack the pixel data into proper type
+		data::ValueArrayReference pixel;
+		auto color=props.getValueAs<std::string>("PhotometricInterpretation");
+		auto bits_allocated=props.getValueAs<uint8_t>("BitsAllocated");
+		auto signed_values=props.getValueAsOr<bool>("PixelRepresentation",false);
 
-		for ( size_t i = 0; i < pixels; i++ ) {
-			util::color<TYPE> &dvoxel = dest[i];
-			dvoxel.r = source[0][i];
-			dvoxel.g = source[1][i];
-			dvoxel.b = source[2][i];
-		}
-		return new data::Chunk(dest,width,height);
-	}
-public:
-	static data::Chunk makeChunk( const ImageFormat_Dicom &loader, DcmFileFormat &dcfile, std::list<util::istring> dialects ) {
-		std::unique_ptr<data::Chunk> ret;
-		DicomImage img( &dcfile, EXS_Unknown );
-
-		if ( img.getStatus() == EIS_Normal ) {
-			const DiPixel *const  pix = img.getInterData();
-			const unsigned long width = img.getWidth(), height = img.getHeight();
-			const void *const data = pix->getData();
-			DcmDataset *dcdata = dcfile.getDataset();
-
-			if ( pix ) {
-				if ( img.isMonochrome() ) { //try to load image directly from the raw monochrome dicom-data
-					switch ( pix->getRepresentation() ) {
-					case EPR_Uint8:
-						ret.reset( new DicomChunk( ( uint8_t * ) data, width, height ) );
-						break;
-					case EPR_Sint8:
-						ret.reset( new DicomChunk( ( int8_t * )  data, width, height ) );
-						break;
-					case EPR_Uint16:
-						ret.reset( new DicomChunk( ( uint16_t * )data, width, height ) );
-						break;
-					case EPR_Sint16:
-						ret.reset( new DicomChunk( ( int16_t * ) data, width, height ) );
-						break;
-					case EPR_Uint32:
-						ret.reset( new DicomChunk( ( uint32_t * )data, width, height ) );
-						break;
-					case EPR_Sint32:
-						ret.reset( new DicomChunk( ( int32_t * ) data, width, height ) );
-						break;
-					default:
-						FileFormat::throwGenericError( "Unsupported datatype for monochrome images" ); //@todo tell the user which datatype it is
-					}
-
-					if ( ret ) {
-						loader.dcmObject2PropMap( dcdata, ret->touchBranch( ImageFormat_Dicom::dicomTagTreeName ), dialects );
-					}
-				} else if ( pix->getPlanes() == 3 ) { //try to load data as color image
-					// if there are 3 planes data is actually an array of 3 pointers
-					switch ( pix->getRepresentation() ) {
-					case EPR_Uint8:
-						ret.reset( copyColor( ( Uint8 ** )data, width, height ) );
-						break;
-					case EPR_Uint16:
-						ret.reset( copyColor( ( Uint16 ** )data, width, height ) );
-						break;
-					default:
-						FileFormat::throwGenericError( "Unsupported datatype for color images" ); //@todo tell the user which datatype it is
-					}
-
-					if ( ret ) {
-						loader.dcmObject2PropMap( dcdata, ret->touchBranch( ImageFormat_Dicom::dicomTagTreeName ), dialects );
-					}
-				} else {
-					FileFormat::throwGenericError( "Unsupported pixel type." );
-				}
-			} else {
-				FileFormat::throwGenericError( "Didn't get any pixel data" );
+		if(color=="COLOR"){
+			assert(signed_values==false);
+			switch(bits_allocated){
+				case  8:pixel=repackValueArray<util::color24>(data);break;
+				case 16:pixel=repackValueArray<util::color48>(data);break;
+				default:LOG(Runtime,error) << "Unsupportet bit-depth "<< bits_allocated << " for color image";
 			}
-		} else {
-			FileFormat::throwGenericError( std::string( "Failed to open image: " ) + DicomImage::getString( img.getStatus() ));
+		}else if(color=="MONOCHROME2"){
+			switch(bits_allocated){
+				case  8:pixel=signed_values? repackValueArray< int8_t>(data):repackValueArray< uint8_t>(data);break;
+				case 16:pixel=signed_values? repackValueArray<int16_t>(data):repackValueArray<uint16_t>(data);break;
+				case 32:pixel=signed_values? repackValueArray<int32_t>(data):repackValueArray<uint32_t>(data);break;
+				default:LOG(Runtime,error) << "Unsupportet bit-depth "<< bits_allocated << " for greyscale image";
+			}
+		}else {
+			LOG(Runtime,error) << "Unsupportet photometric interpretation " << color;
+			ImageFormat_Dicom::throwGenericError("bad pixel type");
 		}
 
-		return *ret;
+		// create a chunk of the proper type
+		data::Chunk ret(pixel,columns,rows);
+		return ret;
+	}
+public:
+	DicomChunk(std::list<data::ValueArrayReference> &&data_elements,const std::string &transferSyntax,const util::PropertyMap &props)
+	{
+		assert(data_elements.size()==1);
+		data::ValueArrayBase &data=*data_elements.front();
+#ifdef HAVE_OPENJPEG
+		if(transferSyntax=="1.2.840.10008.1.2.4.90"){ //JPEG 2K
+			assert(data_elements.front()->getTypeID()==data::ByteArray::staticID());
+			static_cast<data::Chunk&>(*this)=
+					_internal::getj2k(data.castToValueArray<uint8_t>());
+			
+			LOG(Runtime,info) 
+				<< "Created " << this->getSizeAsString() << "-Image of type " << this->getTypeName() 
+				<< " from a " << data.getLength() << " bytes j2k stream";
+		} else 
+#endif //HAVE_OPENJPEG
+		{
+			static_cast<data::Chunk&>(*this)=getUncompressedPixel(data,props);
+			LOG(Runtime,info) 
+				<< "Created " << this->getSizeAsString() << "-Image of type " << this->getTypeName() 
+				<< " from a " << data.getLength() << " bytes of raw data";
+		}
+		this->touchBranch(ImageFormat_Dicom::dicomTagTreeName)=props;
 	}
 };
 
-class DcmtkLogger : public dcmtk::log4cplus::Appender{
-	std::set<dcmtk::log4cplus::tstring> ignores;
-public:
-	DcmtkLogger(){
-		ignores.insert("no pixel data found in DICOM dataset");
-	}
-	virtual void close(){}
-protected:
-	virtual void append(const dcmtk::log4cplus::spi::InternalLoggingEvent& event){
-		const dcmtk::log4cplus::tstring &msg=event.getMessage();
-		LOG_IF(ignores.find(msg)==ignores.end(),Runtime,warning) << "Got an error from dcmtk: \"" << event.getMessage() << "\"";
-	}
-};
 }
 
 const char ImageFormat_Dicom::dicomTagTreeName[] = "DICOM";
@@ -136,22 +181,6 @@ util::istring ImageFormat_Dicom::suffixes( io_modes modes )const
 }
 std::string ImageFormat_Dicom::getName()const {return "Dicom";}
 std::list<util::istring> ImageFormat_Dicom::dialects()const {return {"siemens","withExtProtocols","nocsa","keepmosaic","forcemosaic"};}
-
-
-
-void ImageFormat_Dicom::addDicomDict( DcmDataDictionary &dict )
-{
-	for( DcmHashDictIterator i = dict.normalBegin(); i != dict.normalEnd(); i++ ) {
-		const DcmDictEntry *entry = *i;
-		const DcmTagKey key = entry->getKey();
-		const char *name = entry->getTagName();
-
-		if( util::istring( "Unknown" ) == name ) {
-			dictionary[key] = util::istring( unknownTagName ) + key.toString().c_str();
-		} else
-			dictionary[key] = name;
-	}
-}
 
 
 void ImageFormat_Dicom::sanitise( util::PropertyMap &object, std::list<util::istring> dialects )
@@ -265,13 +294,13 @@ void ImageFormat_Dicom::sanitise( util::PropertyMap &object, std::list<util::ist
 			LOG( Runtime, error ) << "Could not extract row- and columnVector from " << dicomTree.property( "ImageOrientationPatient" );
 		}
 
-		if( object.hasProperty( prefix + "CSAImageHeaderInfo/SliceNormalVector" ) && !object.hasProperty( "sliceVec" ) ) {
-			LOG( Debug, info ) << "Extracting sliceVec from CSAImageHeaderInfo/SliceNormalVector " << dicomTree.property( "CSAImageHeaderInfo/SliceNormalVector" );
-			util::dlist list = dicomTree.getValueAs<util::dlist >( "CSAImageHeaderInfo/SliceNormalVector" );
+		if( object.hasProperty( prefix + "SIEMENS CSA HEADER/SliceNormalVector" ) && !object.hasProperty( "sliceVec" ) ) {
+			LOG( Debug, info ) << "Extracting sliceVec from SIEMENS CSA HEADER/SliceNormalVector " << dicomTree.property( "SIEMENS CSA HEADER/SliceNormalVector" );
+			util::dlist list = dicomTree.getValueAs<util::dlist >( "SIEMENS CSA HEADER/SliceNormalVector" );
 			util::fvector3 vec;
 			std::copy(list.begin(), list.end(), std::begin(vec) );
 			object.setValueAs( "sliceVec", vec );
-			dicomTree.remove( "CSAImageHeaderInfo/SliceNormalVector" );
+			dicomTree.remove( "SIEMENS CSA HEADER/SliceNormalVector" );
 		}
 	} else {
 		LOG( Runtime, warning ) << "Making up row and column vector, because the image lacks this information";
@@ -281,9 +310,9 @@ void ImageFormat_Dicom::sanitise( util::PropertyMap &object, std::list<util::ist
 
 	if ( hasOrTell( prefix + "ImagePositionPatient", object, info ) ) {
 		object.setValueAs( "indexOrigin", dicomTree.getValueAs<util::fvector3>( "ImagePositionPatient" ) );
-	} else if( object.hasProperty( prefix + "CSAImageHeaderInfo/ProtocolSliceNumber" ) ) {
-		util::fvector3 orig( {0, 0, object.getValueAs<float>( prefix + "CSAImageHeaderInfo/ProtocolSliceNumber" ) / object.getValueAs<float>( "DICOM/CSASeriesHeaderInfo/SliceResolution" )} );
-		LOG( Runtime, info ) << "Synthesize missing indexOrigin from CSAImageHeaderInfo/ProtocolSliceNumber as " << orig;
+	} else if( object.hasProperty( prefix + "SIEMENS CSA HEADER/ProtocolSliceNumber" ) ) {
+		util::fvector3 orig( {0, 0, object.getValueAs<float>( prefix + "SIEMENS CSA HEADER/ProtocolSliceNumber" ) / object.getValueAs<float>( "DICOM/CSASeriesHeaderInfo/SliceResolution" )} );
+		LOG( Runtime, info ) << "Synthesize missing indexOrigin from SIEMENS CSA HEADER/ProtocolSliceNumber as " << orig;
 		object.setValueAs( "indexOrigin", orig );
 	} else {
 		object.setValueAs( "indexOrigin", util::fvector3() );
@@ -324,7 +353,7 @@ void ImageFormat_Dicom::sanitise( util::PropertyMap &object, std::list<util::ist
 		}
 	}
 
-	transformOrTell<uint32_t>( prefix + "CSAImageHeaderInfo/UsedChannelMask", "coilChannelMask", object, info );
+	transformOrTell<uint32_t>( prefix + "SIEMENS CSA HEADER/UsedChannelMask", "coilChannelMask", object, info );
 	////////////////////////////////////////////////////////////////
 	// interpret DWI data
 	////////////////////////////////////////////////////////////////
@@ -383,9 +412,9 @@ void ImageFormat_Dicom::sanitise( util::PropertyMap &object, std::list<util::ist
 	}
 
 	if(
-		dicomTree.hasProperty( "CSAImageHeaderInfo/MosaicRefAcqTimes" ) &&
+		dicomTree.hasProperty( "SIEMENS CSA HEADER/MosaicRefAcqTimes" ) &&
 		dicomTree.hasProperty( util::istring( unknownTagName ) + "(0019,1029)" ) &&
-		dicomTree.property( util::istring( unknownTagName ) + "(0019,1029)" ) == dicomTree.property( "CSAImageHeaderInfo/MosaicRefAcqTimes" )
+		dicomTree.property( util::istring( unknownTagName ) + "(0019,1029)" ) == dicomTree.property( "SIEMENS CSA HEADER/MosaicRefAcqTimes" )
 	) {
 		dicomTree.remove( util::istring( unknownTagName ) + "(0019,1029)" );
 	}
@@ -432,8 +461,8 @@ data::Chunk ImageFormat_Dicom::readMosaic( data::Chunk source )
 
 	if ( source.hasProperty( prefix + "SiemensNumberOfImagesInMosaic" ) ) {
 		NumberOfImagesInMosaicProp = prefix + "SiemensNumberOfImagesInMosaic";
-	} else if ( source.hasProperty( prefix + "CSAImageHeaderInfo/NumberOfImagesInMosaic" ) ) {
-		NumberOfImagesInMosaicProp = prefix + "CSAImageHeaderInfo/NumberOfImagesInMosaic";
+	} else if ( source.hasProperty( prefix + "SIEMENS CSA HEADER/NumberOfImagesInMosaic" ) ) {
+		NumberOfImagesInMosaicProp = prefix + "SIEMENS CSA HEADER/NumberOfImagesInMosaic";
 	}
 
 	// All is fine, lets start
@@ -467,19 +496,19 @@ data::Chunk ImageFormat_Dicom::readMosaic( data::Chunk source )
 	std::list<double> acqTimeList;
 	std::list<double>::const_iterator acqTimeIt;
 
-	bool haveAcqTimeList = source.hasProperty( prefix + "CSAImageHeaderInfo/MosaicRefAcqTimes" );
+	bool haveAcqTimeList = source.hasProperty( prefix + "SIEMENS CSA HEADER/MosaicRefAcqTimes" );
 	isis::util::timestamp acqTime;
 
 	if( haveAcqTimeList ) {
-		acqTimeList = source.getValueAs<std::list<double> >( prefix + "CSAImageHeaderInfo/MosaicRefAcqTimes" );
-		source.remove( prefix + "CSAImageHeaderInfo/MosaicRefAcqTimes" );
+		acqTimeList = source.getValueAs<std::list<double> >( prefix + "SIEMENS CSA HEADER/MosaicRefAcqTimes" );
+		source.remove( prefix + "SIEMENS CSA HEADER/MosaicRefAcqTimes" );
 		acqTimeIt = acqTimeList.begin();
 		LOG( Debug, info ) << "The acquisition time offsets of the slices in the mosaic where " << acqTimeList;
 	}
 
 	if( source.hasProperty( "acquisitionTime" ) )acqTime = source.getValueAs<isis::util::timestamp>( "acquisitionTime" );
 	else {
-		LOG_IF( haveAcqTimeList, Runtime, info ) << "Ignoring CSAImageHeaderInfo/MosaicRefAcqTimes because there is no acquisitionTime";
+		LOG_IF( haveAcqTimeList, Runtime, info ) << "Ignoring SIEMENS CSA HEADER/MosaicRefAcqTimes because there is no acquisitionTime";
 		haveAcqTimeList = false;
 	}
 
@@ -538,15 +567,64 @@ std::list<data::Chunk> ImageFormat_Dicom::load ( std::streambuf *source, std::li
 
 std::list< data::Chunk > ImageFormat_Dicom::load(const data::ByteArray source, std::list<util::istring> formatstack, std::list<util::istring> dialects, std::shared_ptr<util::ProgressFeedback> feedback )
 {
-	DcmInputBufferStream dcstream;
-	DcmFileFormat dcfile;
-	dcstream.setBuffer(source.getRawAddress().get(),source.getLength());
-	dcstream.setEos();
-	OFCondition loaded = dcfile.read( dcstream );
+	std::list< data::Chunk > ret;
+	const char prefix[4]={'D','I','C','M'};
+	if(memcmp(&source[128],prefix,4)!=0)
+		throwGenericError("Prefix \"DICM\" not found");
+	
+	size_t meta_info_length = _internal::DicomElement(source,128+4,boost::endian::order::little).getValue()->as<uint32_t>();
+	std::multimap<uint32_t,data::ValueArrayReference> data_elements;
+	
+	LOG(Debug,info)<<"Reading Meta Info begining at " << 158 << " length: " << meta_info_length-14;
+	_internal::DicomElement m(source,158,boost::endian::order::little);
+	util::PropertyMap meta_info=readStream(m,meta_info_length-14,data_elements);
+	
+	const auto transferSyntax= meta_info.getValueAsOr<std::string>("TransferSyntaxUID","1.2.840.10008.1.2");
+	boost::endian::order endian;
+	if(
+		transferSyntax=="1.2.840.10008.1.2"  // Implicit VR Little Endian
+		|| transferSyntax.substr(0,19)=="1.2.840.10008.1.2.1" // Explicit VR Little Endian
+#ifdef HAVE_OPENJPEG
+		|| transferSyntax=="1.2.840.10008.1.2.4.90" //JPEG 2000 Image Compression (Lossless Only)
+#endif //HAVE_OPENJPEG
+	){ 
+		 endian=boost::endian::order::little;
+	} else if(transferSyntax=="1.2.840.10008.1.2.2"){ //explicit big endian
+		 endian=boost::endian::order::big;
+	} else {
+		LOG(Runtime,error) << "Sorry, transfer syntax " << transferSyntax <<  " is not (yet) supportet";
+		ImageFormat_Dicom::throwGenericError("Unsupported transfer syntax");
+	}
 
-	if ( loaded.good() ) {
-		std::list< data::Chunk > ret;
-		data::Chunk chunk = _internal::DicomChunk::makeChunk( *this, dcfile, dialects );
+	//the "real" dataset
+	LOG(Debug,info)<<"Reading dataset begining at " << 144+meta_info_length;
+	_internal::DicomElement dataset_token(source,144+meta_info_length,boost::endian::order::little);
+	
+	util::PropertyMap props=_internal::readStream(dataset_token,source.getLength()-144-meta_info_length,data_elements);
+	
+	//extract CSA header from data_elements
+	auto private_code=props.queryProperty("Private Code for (0029,1000)-(0029,10ff)");
+	if(private_code && private_code->as<std::string>()=="SIEMENS CSA HEADER"){
+		for(uint32_t csa_id=0x00291000;csa_id<0x00291100;csa_id+=0x10){
+			auto found = data_elements.find(csa_id);
+			if(found!=data_elements.end()){
+				util::PropertyMap &subtree=props.touchBranch(private_code->as<std::string>().c_str());
+				parseCSA(found->second->castToValueArray<uint8_t>(),subtree,dialects);
+				data_elements.erase(found);
+			} 
+		}
+	}
+
+	//extract actual image data from data_elements
+	std::list<data::ValueArrayReference> img_data;
+	for(auto e_it=data_elements.find(0x7FE00010);e_it!=data_elements.end() && e_it->first==0x7FE00010;){
+		img_data.push_back(e_it->second);
+		data_elements.erase(e_it++);
+	}
+	
+	if(!img_data.empty()){
+		data::Chunk chunk(_internal::DicomChunk(std::move(img_data),transferSyntax,props));
+	
 		//we got a chunk from the file
 		sanitise( chunk, dialects );
 		const util::slist iType = chunk.getValueAs<util::slist>( util::istring( ImageFormat_Dicom::dicomTagTreeName ) + "/" + "ImageType" );
@@ -567,12 +645,9 @@ std::list< data::Chunk > ImageFormat_Dicom::load(const data::ByteArray source, s
 			ret.back().rename( "SiemensNumberOfImagesInMosaic", "SliceOrientation" );
 		}
 
-		return ret;
-	} else {
-		FileFormat::throwGenericError( std::string( "Failed to open file: " ) + loaded.text() );
-		return std::list< data::Chunk >();
-	}
-
+	} 
+	
+	return ret;
 }
 
 void ImageFormat_Dicom::write( const data::Image &/*image*/, const std::string &/*filename*/, std::list<util::istring> /*dialects*/, std::shared_ptr<util::ProgressFeedback> /*feedback*/ )
@@ -582,59 +657,37 @@ void ImageFormat_Dicom::write( const data::Image &/*image*/, const std::string &
 
 ImageFormat_Dicom::ImageFormat_Dicom()
 {
-	//first read external dictionary if available
-	if ( dcmDataDict.isDictionaryLoaded() ) {
-		DcmDataDictionary &dict = dcmDataDict.wrlock();
-		addDicomDict( dict );
-		dcmDataDict.unlock(); 
-		DJDecoderRegistration::registerCodecs();
-	} else {
-		// check /usr/share/doc/dcmtk/datadict.txt.gz and/or
-		// set DCMDICTPATH or fix DCM_DICT_DEFAULT_PATH in cfunix.h of dcmtk
-		LOG( Runtime, warning ) << "No official data dictionary loaded, will only use known attributes";
-	}
+	//modify the dicionary
+	// override known entries
+	_internal::dicom_dict[0x00100010] = "PatientsName";
+	_internal::dicom_dict[0x00100030] = "PatientsBirthDate";
+	_internal::dicom_dict[0x00100040] = "PatientsSex";
+	_internal::dicom_dict[0x00101010] = "PatientsAge";
+	_internal::dicom_dict[0x00101030] = "PatientsWeight";
 
-	// than override known entries
-	dictionary[DcmTag( 0x0010, 0x0010 )] = "PatientsName";
-	dictionary[DcmTag( 0x0010, 0x0030 )] = "PatientsBirthDate";
-	dictionary[DcmTag( 0x0010, 0x0040 )] = "PatientsSex";
-	dictionary[DcmTag( 0x0010, 0x1010 )] = "PatientsAge";
-	dictionary[DcmTag( 0x0010, 0x1030 )] = "PatientsWeight";
-
-	dictionary[DcmTag( 0x0008, 0x1050 )] = "PerformingPhysiciansName";
+	_internal::dicom_dict[0x00080008] = "ImageType";
+	_internal::dicom_dict[0x00081050] = "PerformingPhysiciansName";
 
 	// override some Siemens specific stuff because it is SliceOrientation in the standard and mosaic-size for siemens - we will figure out while sanitizing
-	dictionary[DcmTag( 0x0019, 0x100a )] = "SiemensNumberOfImagesInMosaic";
-	dictionary[DcmTag( 0x0019, 0x100c )] = "SiemensDiffusionBValue";
-	dictionary[DcmTag( 0x0019, 0x100e )] = "SiemensDiffusionGradientOrientation";
-	dictionary.erase(DcmTag( 0x0021, 0x1010 )); // dcmtk says its ImageType but it isn't (at least not on Siemens)
+	_internal::dicom_dict[0x0019100a] = "SiemensNumberOfImagesInMosaic";
+	_internal::dicom_dict[0x0019100c] = "SiemensDiffusionBValue";
+	_internal::dicom_dict[0x0019100e] = "SiemensDiffusionGradientOrientation";
+	_internal::dicom_dict.erase(0x00211010); // dcmtk says its ImageType but it isn't (at least not on Siemens)
 
 	for( unsigned short i = 0x0010; i <= 0x00FF; i++ ) {
-		dictionary[DcmTag( 0x0029, i )] = ( std::string( "Private Code for " ) + DcmTag( 0x0029, i << 8 ).toString().c_str() + "-" + DcmTag( 0x0029, ( i << 8 ) + 0xFF ).toString().c_str() ).c_str();
+		_internal::dicom_dict[0x00290000 + i] = 
+			util::istring( "Private Code for " ) + _internal::id2Name( 0x0029, i << 8 ) + "-" + _internal::id2Name( 0x0029, ( i << 8 ) + 0xFF );
 	}
 	
 	//http://www.healthcare.siemens.com/siemens_hwem-hwem_ssxa_websites-context-root/wcm/idc/groups/public/@global/@services/documents/download/mdaw/mtiy/~edisp/2008b_ct_dicomconformancestatement-00073795.pdf
+	//@todo do we need this
 	for( unsigned short i = 0x0; i <= 0x02FF; i++ ) {
 		char buff[7];
 		std::snprintf(buff,7,"0x%.4X",i);
-		dictionary[DcmTag( 0x6000, i )] = util::PropertyMap::PropPath("DICOM overlay info") / util::PropertyMap::PropPath(buff);
+		_internal::dicom_dict[(0x6000<<16)+ i] = util::PropertyMap::PropPath("DICOM overlay info") / util::PropertyMap::PropPath(buff);
 	}
-	dictionary[DcmTag( 0x6000, 0x3000 )] = util::PropertyMap::PropPath("DICOM overlay data");
-	
-
-	//hack to steal logging from dcmtk and redirect it to our own
-	dcmtk::log4cplus::Logger logger = dcmtk::log4cplus::Logger::getRoot();
-	// there shall be no logging besides me
-	logger.removeAllAppenders();
-	logger.addAppender(dcmtk::log4cplus::SharedAppenderPtr(new _internal::DcmtkLogger));
+	_internal::dicom_dict[0x60003000] = "DICOM overlay data";
 }
-
-util::PropertyMap::PropPath ImageFormat_Dicom::tag2Name( const DcmTagKey &tag )const
-{
-	std::map< DcmTagKey, util::PropertyMap::PropPath >::const_iterator entry = dictionary.find( tag );
-	return ( entry != dictionary.end() ) ? entry->second : util::PropertyMap::PropPath( util::istring( unknownTagName ) + tag.toString().c_str() );
-}
-
 
 }
 }

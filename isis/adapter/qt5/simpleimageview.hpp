@@ -21,15 +21,35 @@
 #define SIMPLEIMAGEVIEW_HPP
 
 #include <QWidget>
+#include <QGraphicsView>
 #include "../../core/image.hpp"
 
 class QSlider;
+class QLabel;
 class QButtonGroup;
 
 namespace isis{
 namespace qt5{
 namespace _internal {
-class MriGraphicsView;
+
+class MriGraphicsView: public QGraphicsView
+{
+	Q_OBJECT
+	QPointF crossHair;
+protected:
+	void drawForeground(QPainter * painter, const QRectF & rect) override;
+	void mouseMoveEvent(QMouseEvent * event) override;
+	void mousePressEvent(QMouseEvent *event) override;
+	void mouseReleaseEvent(QMouseEvent *event) override;
+public:
+	MriGraphicsView(QWidget *parent=nullptr);
+	void wheelEvent(QWheelEvent * event) override;
+public Q_SLOTS:
+	void moveCrosshair(QPointF to);
+Q_SIGNALS:
+	void mouseMoved(QPointF position);
+};
+
 class TransferFunction{
 	data::ValueArrayBase::Converter c;
 	std::pair<util::ValueReference,util::ValueReference> minmax;
@@ -48,6 +68,7 @@ class SimpleImageView : public QWidget
     Q_OBJECT
 	QVector<QVector<QPixmap>> slides;
 	size_t curr_slice=0,curr_time=0;
+	QLabel *pos_label,*value_label;
 	data::Image m_img;
 	enum {normal=0,complex,color,mask}type;
 	QButtonGroup *transfer_function_group;
@@ -63,9 +84,11 @@ protected Q_SLOTS:
 	void selectTransfer(int id, bool checked);
 	void reScale(qreal bottom, qreal top);
 	void doSave();
+	void onMouseMoved(QPointF pos);
 public:
     SimpleImageView(data::Image img, QString title="", QWidget *parent=nullptr);
 };
+
 }
 }
 

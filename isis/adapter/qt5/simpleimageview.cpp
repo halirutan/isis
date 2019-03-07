@@ -23,6 +23,8 @@
 #include "../../core/io_factory.hpp"
 #include <QSlider>
 #include <QGridLayout>
+#include <QHBoxLayout>
+#include <QLabel>
 #include <QGraphicsView>
 #include <QWheelEvent>
 #include <QGroupBox>
@@ -30,6 +32,7 @@
 #include <QButtonGroup>
 #include <QPushButton>
 #include <QFileDialog>
+#include <QGraphicsSceneEvent>
 
 namespace isis{
 namespace qt5{
@@ -126,20 +129,49 @@ public:
 	}
 };
 
-class MriGraphicsView: public QGraphicsView{
-public:
-	MriGraphicsView(QWidget *parent=nullptr):QGraphicsView(parent){
-		setDragMode(QGraphicsView::ScrollHandDrag);
-	}
-	void wheelEvent(QWheelEvent * event) override{
-		setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
+MriGraphicsView::MriGraphicsView(QWidget *parent):QGraphicsView(parent),crossHair(std::numeric_limits<qreal>::quiet_NaN(),std::numeric_limits<qreal>::quiet_NaN()){
+ 	setCursor(Qt::BlankCursor);
+}
+void MriGraphicsView::wheelEvent(QWheelEvent * event) {
+	setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
 
-		if(event->delta()>0)
-			scale(1.1,1.1);
-		else
-			scale(0.9,0.9);
-	}
-};
+	if(event->delta()>0)
+		scale(1.1,1.1);
+	else
+		scale(0.9,0.9);
+}
+void MriGraphicsView::mouseMoveEvent(QMouseEvent * event){
+	if(event->buttons()==0)
+		mouseMoved(mapToScene(event->pos()));
+	QGraphicsView::mouseMoveEvent(event);
+}
+void MriGraphicsView::mousePressEvent(QMouseEvent * event){
+	setDragMode(QGraphicsView::ScrollHandDrag);
+	QGraphicsView::mousePressEvent(event);
+}
+void MriGraphicsView::mouseReleaseEvent(QMouseEvent * event){
+	setDragMode(QGraphicsView::NoDrag);
+	QGraphicsView::mousePressEvent(event);
+}
+void MriGraphicsView::drawForeground(QPainter * painter, const QRectF & rect){
+	QGraphicsView::drawForeground(painter,rect);
+	if(std::isnan(crossHair.x()) || std::isnan(crossHair.x()))
+		return;
+	
+	painter->setCompositionMode(QPainter::RasterOp_SourceXorDestination);
+	QPen pen(QColor(0xff, 0xff, 0xff));
+	pen.setWidth(0);
+	painter->setPen(pen);
+
+	painter->drawLine(QLineF(crossHair.x(),rect.top(),crossHair.x(),rect.bottom()));
+	painter->drawLine(QLineF(rect.right(),crossHair.y(),rect.left(),crossHair.y()));
+}
+void MriGraphicsView::moveCrosshair(QPointF to){
+	crossHair=to;
+	scene()->update();
+}
+
+
 
 } //namespace _internal
 
@@ -156,13 +188,21 @@ void SimpleImageView::setupUi(){
 
     graphicsView = new _internal::MriGraphicsView(this);
 	gridLayout->addWidget(graphicsView, 0, 0, 1, 1);
+	graphicsView->setMouseTracking(true);
 
 	timeSelect = new QSlider(this);
 	timeSelect->setMinimum(1);
 	timeSelect->setOrientation(Qt::Horizontal);
 	timeSelect->setTickPosition(QSlider::TicksBelow);
-	gridLayout->addWidget(timeSelect, 1, 0, 1, 1);
+	gridLayout->addWidget(timeSelect, 2, 0, 1, 1);
+
+	QFrame *coordfield = new QFrame(this);
+	gridLayout->addWidget(coordfield,1,0,1,1);
+	new QHBoxLayout(coordfield);
 	
+	coordfield->layout()->addWidget(pos_label=new QLabel());
+	coordfield->layout()->addWidget(value_label=new QLabel());
+
 	QPushButton *savebtn=new QPushButton("save",this);
 	gridLayout->addWidget(savebtn, 1, 1, 1, 2);
 	connect(savebtn, SIGNAL(clicked(bool)), SLOT(doSave()));
@@ -322,6 +362,7 @@ void SimpleImageView::updateImage()
 	}
 
 	graphicsView->scene()->addPixmap(QPixmap::fromImage(qimage));
+	connect(graphicsView,SIGNAL(mouseMoved(QPointF)),SLOT(onMouseMoved(QPointF)));
 }
 void SimpleImageView::selectTransfer(int id, bool checked)
 {
@@ -341,6 +382,17 @@ void SimpleImageView::reScale(qreal bottom, qreal top)
 void SimpleImageView::doSave(){
 	data::IOFactory::write(m_img,QFileDialog::getSaveFileName(this,"Store image as..").toStdString());
 }
-
+void SimpleImageView::onMouseMoved(QPointF pos){
+	graphicsView->moveCrosshair(pos);
+	pos_label->setText(QString("Position: %1-%2").arg(pos.x()).arg(pos.y()));
+	
+	const QRect rect(0,0,m_img.getDimSize(data::rowDim),m_img.getDimSize(data::rowDim));
+	
+	if(rect.contains(pos.toPoint())){
+		const std::string value=m_img.getVoxelValue(pos.x(),pos.y(),curr_slice,curr_time)->toString();
+		value_label->setText(QString("Value: ")+QString::fromStdString(value));
+	} else 
+		value_label->setText(QString("Value: --"));
+}
 }
 }
