@@ -14,7 +14,7 @@ cmake_minimum_required(VERSION 3.5.1)
 ############################################################
 set(ISIS_VERSION_MAJOR "0")
 set(ISIS_VERSION_MINOR "7")
-set(ISIS_VERSION_PATCH "16")
+set(ISIS_VERSION_PATCH "17")
 
 set(ISIS_VERSION
   ${ISIS_VERSION_MAJOR}.${ISIS_VERSION_MINOR}.${ISIS_VERSION_PATCH}

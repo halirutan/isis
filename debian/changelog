@@ -1,4 +1,10 @@
-isis (0.7.16-1) xenial; urgency=low
+isis (0.7.17-1ubuntu1) UNRELEASED; urgency=low
+
+  * use own implementation of dicom and thus get rid of dcmtk
+
+ -- Enrico Reimer <reimer@eminem.cbs.mpg.de>  Thu, 07 Mar 2019 17:12:03 +0100
+
+isis (0.7.16-1) xenial UNRELEASED; urgency=low
 
   [ ISIS Group ]
   * big api change in progress
