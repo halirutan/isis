@@ -428,6 +428,9 @@ void ImageFormat_Dicom::sanitise( util::PropertyMap &object, std::list<util::ist
 		}
 	}
 	
+	////////////////////////////////////////////////////////////////
+	// Scaling and Windowing 
+	////////////////////////////////////////////////////////////////
 	auto windowCenterQuery=dicomTree.queryProperty("WindowCenter");
 	auto windowWidthQuery=dicomTree.queryProperty("WindowCenter");
 	if( windowCenterQuery && windowWidthQuery){
@@ -449,6 +452,41 @@ void ImageFormat_Dicom::sanitise( util::PropertyMap &object, std::list<util::ist
 		object.setValueAs("window/min",windowCenter-windowWidth/2);
 		object.setValueAs("window/max",windowCenter+windowWidth/2);
 	}
+	
+	/////////////////////////////////////////////////////////////////
+	//map stored values to real world values using offset and scaling
+	/////////////////////////////////////////////////////////////////
+	
+	//first store default dicom scaling RescaleSlope/RescaleIntercept as realWorldScale/realWorldOffset
+	transformOrTell<float>( prefix + "RescaleSlope", "realWorldScale", object, info );
+	transformOrTell<float>( prefix + "RescaleIntercept", "realWorldOffset", object, info );
+	
+	//Philips rescaling (stolen from https://github.com/rordenlab/dcm2niix/blob/32160d74cd266a59e81a75b655c16de27b8c7681/console/nii_dicom_batch.cpp#L2670)
+	if(dicomTree.property("RealWorldValueMappingSequence/LUTLabel")==std::string("Philips"))
+	{
+		auto intenScalePhilips= dicomTree.queryProperty("RealWorldValueMappingSequence/RealWorldValueLastValueMapped");
+		float &intenScale=object.refValueAsOr<float>("realWorldScale",1);
+		float &intenIntercept=object.refValueAsOr<float>("realWorldOffset",0);
+
+		if (intenScalePhilips) {
+			//we will report calibrated "FP" values http://www.ncbi.nlm.nih.gov/pmc/articles/PMC3998685/
+			float l0 = intenIntercept / (intenScale * intenScalePhilips->as<float>());
+			float l1 = (intenScale+intenIntercept) / (intenScale * intenScalePhilips->as<float>());
+			float intenScaleP = intenScale;
+			float intenInterceptP = intenIntercept;
+			if (l0 != l1) {
+				intenInterceptP = l0;
+				intenScaleP = l1-l0;
+			}
+			if (!util::fuzzyEqual(intenIntercept,intenInterceptP) || !util::fuzzyEqual(intenScale, intenScaleP)){
+				LOG(Runtime,info) << "Philips Scaling Values RS:RI:SS = " << intenScale << intenIntercept << intenScalePhilips << "(see PMC3998685)";
+
+				intenScale = intenScaleP;
+				intenIntercept = intenInterceptP;
+			}
+		}
+	} //PhilipsPrecise()
+
 }
 
 data::Chunk ImageFormat_Dicom::readMosaic( data::Chunk source )

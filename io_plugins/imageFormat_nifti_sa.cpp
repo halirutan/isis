@@ -1024,17 +1024,18 @@ void ImageFormat_NiftiSa::write( const data::Image &img, const std::string &file
 		scaling={
 			image.getValueAsOr<float>("window/min",0),
 			image.getValueAsOr<float>("window/max",0),
-			image.getValueAsOr<float>("DICOM/RescaleSlope",1),
-			image.getValueAsOr<float>("DICOM/RescaleIntercept",0)
+			image.getValueAsOr<float>("realWorldScale",1),
+			image.getValueAsOr<float>("realWorldOffset",0)
 		};
-
-		if( image.getMajorTypeID() == data::ValueArray<util::color24>::staticID() ) {
+		
+		// ignore scaling for color and for complex images
+		if( image.getMajorTypeID() == data::ValueArray<util::color24>::staticID() ) { 
 			header->cal_min = 0;
 			header->cal_max = 255;
 		} else if (image.getMajorTypeID() == data::ValueArray<std::complex< double > >::staticID() || image.getMajorTypeID() == data::ValueArray<std::complex< float > >::staticID()){
 			header->cal_min = 0;
 			header->cal_max = 0;
-		} else {
+		} else { //otherwise
 			if(image.hasProperty("window/max") && image.hasProperty("window/min")){
 				header->cal_min = scaling.cal_min;
 				header->cal_max = scaling.cal_min+(scaling.cal_max-scaling.cal_min)*scaling.scl_slope;
