@@ -335,7 +335,6 @@ void ImageFormat_NiftiSa::parseSliceOrdering( const std::shared_ptr< isis::image
 	}
 
 	//if the sequence is "normal"
-	current.setValueAs<uint32_t>( "acquisitionNumber", 1 );
 	const size_t dims = current.getRelevantDims();
 	assert( dims <= 4 ); // more than 4 dimensions are ... well, not expected
 
@@ -555,9 +554,6 @@ void ImageFormat_NiftiSa::parseHeader( const std::shared_ptr< isis::image_io::_i
 		break;
 	}
 
-
-	props.setValueAs<uint16_t>( "sequenceNumber", 0 );
-
 	if( head->sform_code ) { // get srow if sform_code>0
 		util::Selection code=formCode;
 		if(code.set(head->sform_code))
@@ -751,12 +747,13 @@ std::list< data::Chunk > ImageFormat_NiftiSa::load(
 
 
 	//set up the size - copy dim[0] values from dim[1]..dim[5]
-	util::vector4<size_t> size;
+	std::array<size_t, 7> size;
 	uint8_t tDims = 0;
 
-	for( uint_fast8_t i = 1; i < 5; i++ ) {
+	for( uint_fast8_t i = 1; i < 8; i++ ) {
 		if( header->dim[i] <= 0 ) {
-			LOG( Runtime, warning ) << "Resetting invalid dim[" << i << "] to 1";
+			LOG_IF(i<5, Runtime, warning ) << "Resetting invalid dim[" << i << "] to 1";
+			LOG_IF(i>=5, Runtime, info ) << "Resetting invalid dim[" << i << "] to 1";
 			header->dim[i] = 1;
 		}
 
@@ -767,7 +764,7 @@ std::list< data::Chunk > ImageFormat_NiftiSa::load(
 	LOG_IF( tDims != header->dim[0], Runtime, warning ) << "dim[0]==" << header->dim[0] << " doesn't fit the image, assuming " << ( int )tDims;
 	header->dim[0] = tDims;
 
-	std::copy(header->dim + 1, header->dim + 1 + 4, std::begin(size) );
+	std::copy(header->dim + 1, header->dim + 8, std::begin(size) );
 	data::ValueArrayReference data_src;
 
 	if( header->datatype == NIFTI_TYPE_BINARY ) { // image is binary encoded - needs special decoding
@@ -824,9 +821,6 @@ std::list< data::Chunk > ImageFormat_NiftiSa::load(
 		}
 	}
 
-	// create original chunk
-	data::Chunk orig( data_src, size[0], size[1], size[2], size[3] );
-
 	// check for extenstions and parse them
 	data::ValueArray< uint8_t > extID = source.at<uint8_t>( header->sizeof_hdr, 4, swap_endian );
 	_internal::DCMStack dcmmeta;
@@ -860,24 +854,44 @@ std::list< data::Chunk > ImageFormat_NiftiSa::load(
 			dcmmeta.remove( found );
 	}
 
-
-	//parse the header and add respective properties to the chunk
-	data::scaling_pair scl;
-	parseHeader( header, orig, scl );
+	// split up data into 4D chunks and load them
+	std::list<data::Chunk> ret;
+	std::array<size_t,4> inner_size;
+	size_t snum=0;
 	
-	if(!scl.first.isEmpty() || !scl.second.isEmpty() ){
-		LOG(Runtime,info) << "Applying scaling " << scl << " from the nifti header, result will be in double";
-		orig.convertToType(data::ValueArray<double>::staticID(),scl);
+	std::copy(std::begin(size),std::begin(size)+4,std::begin(inner_size));
+	LOG_IF(util::product(inner_size)!=util::product(size),Runtime,notice) 
+		<< "Splitting higher dimensional image up into " << util::product(size)/util::product(inner_size) << " " << inner_size << " chunks";
+	
+	for(auto &data_chk:data_src->splice(util::product(inner_size))){
+		
+		data::Chunk orig( data_chk, size[0], size[1], size[2], size[3] );
+
+		//parse the header and add respective properties to the chunk
+		data::scaling_pair scl;
+		parseHeader( header, orig, scl );
+		
+		if(!scl.first.isEmpty() || !scl.second.isEmpty() ){
+			LOG(Runtime,info) << "Applying scaling " << scl << " from the nifti header, result will be in double";
+			orig.convertToType(data::ValueArray<double>::staticID(),scl);
+		}
+		dcmmeta.translateToISIS( orig );
+
+		if(!orig.hasProperty( "acquisitionNumber")){//if dcmmeta didn't set slice ordering
+			parseSliceOrdering( header, orig ); //get it from the header
+			orig.setValueAs<uint32_t>( "acquisitionNumber", 1 ); //and set acquisitionNumber manualy
+		}
+		
+		if(!orig.hasProperty( "sequenceNumber"))
+			orig.setValueAs<uint16_t>( "sequenceNumber", ++snum );
+
+		if( orig.hasBranch( "DICOM" ) ) // if we got DICOM data clean up some
+			sanitise( orig );
+		
+		ret.push_back(orig);
 	}
-	dcmmeta.translateToISIS( orig );
-
-	if(!orig.hasProperty( "acquisitionNumber"))//if dcmmeta didn't set slice ordering
-		parseSliceOrdering( header, orig ); //get it from the header
-
-	if( orig.hasBranch( "DICOM" ) ) // if we got DICOM data clean up some
-		sanitise( orig );
 	
-	return std::list<data::Chunk>(1,orig);
+	return ret;
 }
 
 std::unique_ptr<_internal::WriteOp > ImageFormat_NiftiSa::getWriteOp( const isis::data::Image &src, std::list<isis::util::istring> dialects )
