@@ -308,17 +308,20 @@ namespace _internal{
 	}
 	util::ValueReference string_generate(const DicomElement *e){
 		//@todo http://dicom.nema.org/Dicom/2013/output/chtml/part05/sect_6.2.html#note_6.1-2-1
-		const uint8_t *start=e->data();
-		const uint8_t *end=start+e->getLength()-1;
-		while(end>=start && (*end==' '|| *end==0)) //cut of trailing spaces and zeros
-			--end;
-		const std::string ret_s(start,end+1);
-		const util::slist ret_list=util::stringToList<std::string>(ret_s,'\\');
-		
-		if(ret_list.size()>1)
-			return util::Value<util::slist>(ret_list);
-		else
-			return util::Value<std::string>(ret_s);
+		if(e->getLength()){
+			const uint8_t *start=e->data();
+			const uint8_t *end=start+e->getLength()-1;
+			while(end>=start && (*end==' '|| *end==0)) //cut of trailing spaces and zeros
+				--end;
+			const std::string ret_s(start,end+1);
+			const util::slist ret_list=util::stringToList<std::string>(ret_s,'\\');
+			
+			if(ret_list.size()>1)
+				return util::Value<util::slist>(ret_list);
+			else
+				return util::Value<std::string>(ret_s);
+		} else 
+			return util::ValueReference();
 	}
 	util::ValueReference parse_AS(const _internal::DicomElement *e){
 		util::ValueReference ret;
@@ -383,9 +386,9 @@ namespace _internal{
 		{"IS",{string_generate,nullptr,0}},
 		{"DS",{string_generate,nullptr,0}},
 		//time strings
-		{"DA",{[](const _internal::DicomElement *e){return string_generate(e)->copyByID(util::Value<util::date>::staticID());},nullptr,0}},
-		{"TM",{[](const _internal::DicomElement *e){return string_generate(e)->copyByID(util::Value<util::timestamp>::staticID());},nullptr,0}},
-		{"DT",{[](const _internal::DicomElement *e){return string_generate(e)->copyByID(util::Value<util::timestamp>::staticID());},nullptr,0}},
+		{"DA",{[](const _internal::DicomElement *e){auto prop=string_generate(e); return prop.isEmpty()?prop:prop->copyByID(util::Value<util::date>::staticID());},nullptr,0}},
+		{"TM",{[](const _internal::DicomElement *e){auto prop=string_generate(e); return prop.isEmpty()?prop:prop->copyByID(util::Value<util::timestamp>::staticID());},nullptr,0}},
+		{"DT",{[](const _internal::DicomElement *e){auto prop=string_generate(e); return prop.isEmpty()?prop:prop->copyByID(util::Value<util::timestamp>::staticID());},nullptr,0}},
 		{"AS",{parse_AS,nullptr,0}}
 
 	};
