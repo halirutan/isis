@@ -1,9 +1,10 @@
-isis (0.7.17-1ubuntu2) UNRELEASED; urgency=low
+isis (0.7.17-1ubuntu3) UNRELEASED; urgency=low
 
   * use own implementation of dicom and thus get rid of dcmtk
   * include ZISRAW import (for ZEISS .czi files)
+  * in orthanc force deep copy of input to fix problems with cheap copy io modules
 
- -- Enrico Reimer <reimer@linus.cbs.mpg.de>  Thu, 16 May 2019 13:19:02 +0200
+ -- Enrico Reimer <reimer@linus.cbs.mpg.de>  Thu, 04 Jul 2019 15:59:40 +0200
 
 isis (0.7.16-1) xenial UNRELEASED; urgency=low
 

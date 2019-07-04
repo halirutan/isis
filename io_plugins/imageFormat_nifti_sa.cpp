@@ -847,7 +847,7 @@ std::list< data::Chunk > ImageFormat_NiftiSa::load(
 				LOG( Runtime, warning ) << "sorry nifti extension for AFNI is not yet supported";
 				break;
 			default:
-				LOG( Runtime, warning ) << "sorry unknown nifti extension ID " << util::MSubject( ext_hdr[1] );
+				LOG( Runtime, info ) << "ignoring unknown nifti extension ID " << util::MSubject( ext_hdr[1] );
 				break;
 			}
 

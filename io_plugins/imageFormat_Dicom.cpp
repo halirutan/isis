@@ -622,7 +622,9 @@ std::list< data::Chunk > ImageFormat_Dicom::load(const data::ByteArray source, s
 		data_elements.erase(e_it++);
 	}
 	
-	if(!img_data.empty()){
+	if(img_data.empty()){
+		throwGenericError("No image data found");
+	} else {
 		data::Chunk chunk(_internal::DicomChunk(std::move(img_data),transferSyntax,props));
 	
 		//we got a chunk from the file
