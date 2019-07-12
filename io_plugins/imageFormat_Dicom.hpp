@@ -52,7 +52,7 @@ template <boost::endian::order Order> struct ExplicitVrTag:Tag<Order>{
 	boost::endian::endian_buffer<Order, int_least16_t, 16> length;
 };
 
-extern std::map<uint32_t,util::PropertyMap::PropPath> dicom_dict;
+extern std::map<uint32_t,std::pair<std::string,util::PropertyMap::PropPath>> dicom_dict;
 
 class DicomElement{
 	typedef std::function<util::ValueReference(const DicomElement *e)> value_generator;

@@ -661,24 +661,24 @@ ImageFormat_Dicom::ImageFormat_Dicom()
 {
 	//modify the dicionary
 	// override known entries
-	_internal::dicom_dict[0x00100010] = "PatientsName";
-	_internal::dicom_dict[0x00100030] = "PatientsBirthDate";
-	_internal::dicom_dict[0x00100040] = "PatientsSex";
-	_internal::dicom_dict[0x00101010] = "PatientsAge";
-	_internal::dicom_dict[0x00101030] = "PatientsWeight";
+	_internal::dicom_dict[0x00100010] = {"PN","PatientsName"};
+	_internal::dicom_dict[0x00100030] = {"DA","PatientsBirthDate"};
+	_internal::dicom_dict[0x00100040] = {"CS","PatientsSex"};
+	_internal::dicom_dict[0x00101010] = {"AS","PatientsAge"};
+	_internal::dicom_dict[0x00101030] = {"DS","PatientsWeight"};
 
-	_internal::dicom_dict[0x00080008] = "ImageType";
-	_internal::dicom_dict[0x00081050] = "PerformingPhysiciansName";
+	_internal::dicom_dict[0x00080008] = {"CS","ImageType"};
+	_internal::dicom_dict[0x00081050] = {"PN","PerformingPhysiciansName"};
 
 	// override some Siemens specific stuff because it is SliceOrientation in the standard and mosaic-size for siemens - we will figure out while sanitizing
-	_internal::dicom_dict[0x0019100a] = "SiemensNumberOfImagesInMosaic";
-	_internal::dicom_dict[0x0019100c] = "SiemensDiffusionBValue";
-	_internal::dicom_dict[0x0019100e] = "SiemensDiffusionGradientOrientation";
+	_internal::dicom_dict[0x0019100a] = {"--","SiemensNumberOfImagesInMosaic"};
+	_internal::dicom_dict[0x0019100c] = {"--","SiemensDiffusionBValue"};
+	_internal::dicom_dict[0x0019100e] = {"--","SiemensDiffusionGradientOrientation"};
 	_internal::dicom_dict.erase(0x00211010); // dcmtk says its ImageType but it isn't (at least not on Siemens)
 
 	for( unsigned short i = 0x0010; i <= 0x00FF; i++ ) {
 		_internal::dicom_dict[0x00290000 + i] = 
-			util::istring( "Private Code for " ) + _internal::id2Name( 0x0029, i << 8 ) + "-" + _internal::id2Name( 0x0029, ( i << 8 ) + 0xFF );
+			{"--",util::istring( "Private Code for " ) + _internal::id2Name( 0x0029, i << 8 ) + "-" + _internal::id2Name( 0x0029, ( i << 8 ) + 0xFF )};
 	}
 	
 	//http://www.healthcare.siemens.com/siemens_hwem-hwem_ssxa_websites-context-root/wcm/idc/groups/public/@global/@services/documents/download/mdaw/mtiy/~edisp/2008b_ct_dicomconformancestatement-00073795.pdf
@@ -686,9 +686,9 @@ ImageFormat_Dicom::ImageFormat_Dicom()
 	for( unsigned short i = 0x0; i <= 0x02FF; i++ ) {
 		char buff[7];
 		std::snprintf(buff,7,"0x%.4X",i);
-		_internal::dicom_dict[(0x6000<<16)+ i] = util::PropertyMap::PropPath("DICOM overlay info") / util::PropertyMap::PropPath(buff);
+		_internal::dicom_dict[(0x6000<<16)+ i] = {"--",util::PropertyMap::PropPath("DICOM overlay info") / util::PropertyMap::PropPath(buff)};
 	}
-	_internal::dicom_dict[0x60003000] = "DICOM overlay data";
+	_internal::dicom_dict[0x60003000] = {"--","DICOM overlay data"};
 }
 
 }

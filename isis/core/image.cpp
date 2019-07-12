@@ -976,7 +976,7 @@ size_t Image::getNrOfTimesteps() const
 
 util::fvector3 Image::getFoV() const
 {
-	util::fvector4 voxelGap;
+	util::fvector4 voxelGap{0,0,0,0};
 
 	if ( hasProperty( "voxelGap" ) ) {
 		voxelGap = getValueAs<util::fvector4>( "voxelGap" );
