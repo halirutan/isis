@@ -38,7 +38,16 @@ struct tag_vr_visitor
 		return std::string(_tag->vr,_tag->vr+2);
 	}
 	template<boost::endian::order Order> std::string operator()(const ImplicitVrTag<Order> *_tag)const{
-		return "--";
+		const auto id=_tag->getID32();
+		if(id==0x7fe00010)
+			return "OW"; //implicit pixel data are OW (http://dicom.nema.org/dicom/2013/output/chtml/part05/chapter_A.html)
+		else {
+			auto found=dicom_dict.find(id);
+			if(found==dicom_dict.end())
+				return "--";
+			else
+				return found->second.first;
+		}
 	}
 };
 struct tag_id_visitor
@@ -48,6 +57,7 @@ struct tag_id_visitor
 	}
 };
 bool DicomElement::extendedLength()const{
+	if(implicit_vr)return false;//there is no extendedLength on implicit vr
 	const std::string vr=getVR();
 	// those vr have a additional 32bit length after a 0x0000 where the length normaly is supposed to be
 	return vr=="OB" || vr=="OW" || vr== "OF" || vr== "SQ" || vr== "UT" || vr== "UN";
@@ -86,7 +96,7 @@ util::PropertyMap::PropPath DicomElement::getName()const{
 	}
 }
 
-DicomElement::DicomElement(const data::ByteArray &_source, size_t _position, boost::endian::order _endian):source(_source),position(_position),endian(_endian){
+DicomElement::DicomElement(const data::ByteArray &_source, size_t _position, boost::endian::order _endian,bool _implicit_vr):source(_source),position(_position),endian(_endian),implicit_vr(_implicit_vr){
 	next(position);//trigger read by calling next without moving
 }
 bool DicomElement::next(){
@@ -114,8 +124,10 @@ const uint8_t *DicomElement::data()const{
 	return &source[position+2+2+2+2]; //offset by group-id, element-id, vr and length
 }
 util::ValueReference DicomElement::getValue(){
+	return getValue(getVR());
+}
+util::ValueReference DicomElement::getValue(std::string vr){
 	util::ValueReference ret;
-	const std::string vr=getVR();
 	auto found_generator=generator_map.find(vr);
 	if(found_generator!=generator_map.end()){
 		auto generator=found_generator->second;;
@@ -139,7 +151,7 @@ util::ValueReference DicomElement::getValue(){
 DicomElement DicomElement::next(boost::endian::order endian)const{
 	//@todo handle end of stream
 	size_t nextpos=position+2+2+2+2+getLength();
-	return DicomElement(source,nextpos,endian);
+	return DicomElement(source,nextpos,endian,implicit_vr);
 }
 bool DicomElement::endian_swap()const{
 	switch(endian){

@@ -66,17 +66,22 @@ class DicomElement{
 		ImplicitVrTag<boost::endian::order::little> *
 	> tag_types;
 	tag_types tag;
+	bool implicit_vr=false;
 	struct generator{value_generator scalar,list;uint8_t value_size;};
 	static std::map<std::string,generator> generator_map;
 	template<boost::endian::order Order> tag_types makeTag(){
 		tag_types ret;
-		Tag<Order> *probe=(Tag<Order>*)&source[position];
-		switch(probe->getID32()){
-		case 0xfffee000: //sequence start
-		case 0xfffee00d: //sequence end
-			ret=(ImplicitVrTag<Order>*)&source[position];break;
-		default:
-			ret=(ExplicitVrTag<Order>*)&source[position];break;
+		if(implicit_vr){
+			ret=(ImplicitVrTag<Order>*)&source[position];
+		} else {
+			Tag<Order> *probe=(Tag<Order>*)&source[position];
+			switch(probe->getID32()){
+			case 0xfffee000: //sequence start
+			case 0xfffee00d: //sequence end
+				ret=(ImplicitVrTag<Order>*)&source[position];break;
+			default:
+				ret=(ExplicitVrTag<Order>*)&source[position];break;
+			}
 		}
 		return ret;
 	}
@@ -99,8 +104,9 @@ public:
 	size_t getPosition()const;
 	std::string getVR()const;
 	util::PropertyMap::PropPath getName()const;
-	DicomElement(const data::ByteArray &_source, size_t _position, boost::endian::order endian);
+	DicomElement(const data::ByteArray &_source, size_t _position, boost::endian::order endian,bool _implicit_vr);
 	util::ValueReference getValue();
+	util::ValueReference getValue(const std::string vr);
 	DicomElement next(boost::endian::order endian)const;
 };
 }

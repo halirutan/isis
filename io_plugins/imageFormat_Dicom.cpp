@@ -93,7 +93,7 @@ util::PropertyMap readStream(DicomElement &token,size_t stream_len,std::multimap
 			}
 			LOG(Debug,verbose_info) << "Sequence " << name << " finished, continuing at " << token.getPosition()+token.getLength()+8;
 		}else{
-			auto value=token.getValue();
+			auto value=token.getValue(vr);
 			if(!value.isEmpty()){
 				ret.touchProperty(token.getName())=*value;
 			}
@@ -429,7 +429,7 @@ void ImageFormat_Dicom::sanitise( util::PropertyMap &object, std::list<util::ist
 	}
 	
 	auto windowCenterQuery=dicomTree.queryProperty("WindowCenter");
-	auto windowWidthQuery=dicomTree.queryProperty("WindowCenter");
+	auto windowWidthQuery=dicomTree.queryProperty("WindowWidth");
 	if( windowCenterQuery && windowWidthQuery){
 		util::ValueReference windowCenterVal=windowCenterQuery->front();
 		util::ValueReference windowWidthVal=windowWidthQuery->front();
@@ -572,18 +572,21 @@ std::list< data::Chunk > ImageFormat_Dicom::load(const data::ByteArray source, s
 	if(memcmp(&source[128],prefix,4)!=0)
 		throwGenericError("Prefix \"DICM\" not found");
 	
-	size_t meta_info_length = _internal::DicomElement(source,128+4,boost::endian::order::little).getValue()->as<uint32_t>();
+	size_t meta_info_length = _internal::DicomElement(source,128+4,boost::endian::order::little,false).getValue()->as<uint32_t>();
 	std::multimap<uint32_t,data::ValueArrayReference> data_elements;
 	
 	LOG(Debug,info)<<"Reading Meta Info begining at " << 158 << " length: " << meta_info_length-14;
-	_internal::DicomElement m(source,158,boost::endian::order::little);
+	_internal::DicomElement m(source,158,boost::endian::order::little,false);
 	util::PropertyMap meta_info=readStream(m,meta_info_length-14,data_elements);
 	
 	const auto transferSyntax= meta_info.getValueAsOr<std::string>("TransferSyntaxUID","1.2.840.10008.1.2");
 	boost::endian::order endian;
-	if(
-		transferSyntax=="1.2.840.10008.1.2"  // Implicit VR Little Endian
-		|| transferSyntax.substr(0,19)=="1.2.840.10008.1.2.1" // Explicit VR Little Endian
+	bool implicit_vr=false;
+	if(transferSyntax=="1.2.840.10008.1.2"){  // Implicit VR Little Endian
+		 endian=boost::endian::order::little;
+		 implicit_vr=true;
+	} else if(
+		transferSyntax.substr(0,19)=="1.2.840.10008.1.2.1" // Explicit VR Little Endian
 #ifdef HAVE_OPENJPEG
 		|| transferSyntax=="1.2.840.10008.1.2.4.90" //JPEG 2000 Image Compression (Lossless Only)
 #endif //HAVE_OPENJPEG
@@ -598,7 +601,7 @@ std::list< data::Chunk > ImageFormat_Dicom::load(const data::ByteArray source, s
 
 	//the "real" dataset
 	LOG(Debug,info)<<"Reading dataset begining at " << 144+meta_info_length;
-	_internal::DicomElement dataset_token(source,144+meta_info_length,boost::endian::order::little);
+	_internal::DicomElement dataset_token(source,144+meta_info_length,boost::endian::order::little,implicit_vr);
 	
 	util::PropertyMap props=_internal::readStream(dataset_token,source.getLength()-144-meta_info_length,data_elements);
 	
@@ -675,6 +678,15 @@ ImageFormat_Dicom::ImageFormat_Dicom()
 	_internal::dicom_dict[0x0019100c] = {"--","SiemensDiffusionBValue"};
 	_internal::dicom_dict[0x0019100e] = {"--","SiemensDiffusionGradientOrientation"};
 	_internal::dicom_dict.erase(0x00211010); // dcmtk says its ImageType but it isn't (at least not on Siemens)
+	
+	_internal::dicom_dict[0x00280106] = {"SS", "SmallestImagePixelValue"};
+	_internal::dicom_dict[0x00280107] = {"SS", "LargestImagePixelValue"};
+	
+	_internal::dicom_dict[0x00280108] = {"SS", "SmallestImagePixelValueInSeries"};
+	_internal::dicom_dict[0x00280109] = {"SS", "LargestImagePixelValueInSeries"};
+	
+	_internal::dicom_dict[0x00281050] = {"DS", "WindowCenter"};
+	_internal::dicom_dict[0x00281051] = {"DS", "WindowWidth"};
 
 	for( unsigned short i = 0x0010; i <= 0x00FF; i++ ) {
 		_internal::dicom_dict[0x00290000 + i] = 
