@@ -102,9 +102,26 @@ util::PropertyMap readStream(DicomElement &token,size_t stream_len,std::multimap
 	return ret;
 }
 template<typename T> data::ValueArrayReference repackValueArray(data::ValueArrayBase &data){
+	//the VR of pxel data no neccesarly fits the actual pixel representation so we have to repack the raw byte data
 	const auto new_ptr=std::static_pointer_cast<T>(data.getRawAddress());
-	return data::ValueArray<T>(new_ptr,data.getLength());
+	const size_t bytes = data.getLength()*data.bytesPerElem();
+	return data::ValueArray<T>(new_ptr,bytes/sizeof(T));
 }
+template<typename T> data::ValueArrayReference repackValueArray(data::ValueArrayBase &data, bool invert){
+	data::ValueArrayReference ret=repackValueArray<T>(data);
+	
+	if(invert){
+		std::pair<util::ValueReference, util::ValueReference> minmax=ret->getMinMax();
+		const T min=minmax.first->as<T>();
+		const T max=minmax.second->as<T>();
+		for(T& v:ret->as<T>()){
+			const T dist_from_min=v-min;
+			v=max-1-dist_from_min;
+		}
+	}
+	return ret;
+}
+
 class DicomChunk : public data::Chunk
 {
 	data::Chunk getUncompressedPixel(data::ValueArrayBase &data,const util::PropertyMap &props){
@@ -118,18 +135,20 @@ class DicomChunk : public data::Chunk
 		auto bits_allocated=props.getValueAs<uint8_t>("BitsAllocated");
 		auto signed_values=props.getValueAsOr<bool>("PixelRepresentation",false);
 
-		if(color=="COLOR"){
+		//@todo add more "color-modes" https://dicom.innolitics.com/ciods/mr-image/image-pixel/00280004
+		if(color=="COLOR" || color=="RGB"){
 			assert(signed_values==false);
 			switch(bits_allocated){
 				case  8:pixel=repackValueArray<util::color24>(data);break;
 				case 16:pixel=repackValueArray<util::color48>(data);break;
 				default:LOG(Runtime,error) << "Unsupportet bit-depth "<< bits_allocated << " for color image";
 			}
-		}else if(color=="MONOCHROME2"){
+		}else if(color=="MONOCHROME2" || color=="MONOCHROME1"){
+			bool invert = (color=="MONOCHROME1");
 			switch(bits_allocated){
-				case  8:pixel=signed_values? repackValueArray< int8_t>(data):repackValueArray< uint8_t>(data);break;
-				case 16:pixel=signed_values? repackValueArray<int16_t>(data):repackValueArray<uint16_t>(data);break;
-				case 32:pixel=signed_values? repackValueArray<int32_t>(data):repackValueArray<uint32_t>(data);break;
+				case  8:pixel=signed_values? repackValueArray< int8_t>(data):repackValueArray< uint8_t>(data,invert);break;
+				case 16:pixel=signed_values? repackValueArray<int16_t>(data):repackValueArray<uint16_t>(data,invert);break;
+				case 32:pixel=signed_values? repackValueArray<int32_t>(data):repackValueArray<uint32_t>(data,invert);break;
 				default:LOG(Runtime,error) << "Unsupportet bit-depth "<< bits_allocated << " for greyscale image";
 			}
 		}else {
@@ -138,6 +157,7 @@ class DicomChunk : public data::Chunk
 		}
 
 		// create a chunk of the proper type
+		assert(pixel->getLength()==rows*columns);
 		data::Chunk ret(pixel,columns,rows);
 		return ret;
 	}
