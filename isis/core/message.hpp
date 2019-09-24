@@ -20,7 +20,7 @@
 #include <stdio.h>
 
 #include <chrono>
-#include <boost/filesystem/path.hpp>
+#include <filesystem>
 
 namespace isis
 {
@@ -43,10 +43,8 @@ public:
 		text << cont;
 		assign( text.str() );
 	}
-	MSubject( const boost::filesystem::path &cont ) {
-		std::ostringstream text;
-		text << cont.native();
-		assign( text.str() );
+	template<> MSubject( const std::filesystem::path &cont ) {
+		assign( cont );
 	}
 };
 /**
@@ -61,10 +59,8 @@ public:
 		text << cont;
 		assign( text.str() );
 	}
-	explicit NoSubject( const boost::filesystem::path &cont ) {
-		std::ostringstream text;
-		text << cont.native();
-		assign( text.str() );
+	explicit NoSubject( const std::filesystem::path &cont ) {
+		assign( cont );
 	}
 };
 
@@ -104,7 +100,7 @@ class Message: protected std::ostringstream
 	std::weak_ptr<MessageHandlerBase> commitTo;
 public:
 	std::string m_object, m_module;
-	boost::filesystem::path m_file;
+	std::filesystem::path m_file;
 	std::list<std::string> m_subjects;
 	std::time_t m_timeStamp;
 	int m_line;

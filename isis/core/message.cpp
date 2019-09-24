@@ -213,7 +213,7 @@ void DefaultMsgPrint::commit_tty(const Message& mesg)
 			stderr,"%s:%s[%s:%d]%s\n",
 			mesg.m_module.c_str(),
 			logLevelName( mesg.m_level ),
-			mesg.m_file.leaf().c_str(),
+			mesg.m_file.filename().c_str(),
 			mesg.m_line,
 			mesg.merge(color_code).c_str()
 		);
@@ -236,7 +236,7 @@ void DefaultMsgPrint::commit_pipe(const Message& mesg)
 		util::logLevelName( mesg.m_level ),
 		mesg.merge("").c_str(),
 		mesg.strTime("%T").c_str(),
-		mesg.m_file.leaf().c_str(),
+		mesg.m_file.filename().c_str(),
 		mesg.m_line
 	);
 }
