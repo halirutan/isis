@@ -161,7 +161,8 @@ bool Message::shouldCommit()const
 		return ( buff->m_level >= m_level );
 	else return false;
 }
-std::string Message::str()const{
+
+std::string Message::str() const{
 	return std::ostringstream::str();
 }
 
@@ -185,7 +186,7 @@ void DefaultMsgPrint::commit_tty(const Message& mesg)
 	static int erret = 0;
 	static bool is_term = 
 #ifdef HAVE_CURSES
-	(setupterm(NULL, 1, &erret) == 0);
+	(setupterm(nullptr, 1, &erret) == 0);
 #else
 	false;
 #endif
