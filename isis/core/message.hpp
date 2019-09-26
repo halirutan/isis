@@ -43,9 +43,8 @@ public:
 		text << cont;
 		assign( text.str() );
 	}
-	template<> MSubject( const std::filesystem::path &cont ) {
-		assign( cont );
-	}
+	MSubject( const std::string &cont );
+	MSubject( std::string &&cont );
 };
 /**
  * Wrapper to explicitely mark something as non-"Subject" in a logging message.
@@ -59,9 +58,8 @@ public:
 		text << cont;
 		assign( text.str() );
 	}
-	explicit NoSubject( const std::filesystem::path &cont ) {
-		assign( cont );
-	}
+	NoSubject( const std::string &cont );
+	NoSubject( std::string &&cont );
 };
 
 const char *logLevelName( LogLevel level );

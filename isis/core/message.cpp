@@ -88,6 +88,12 @@ std::string Message::strTime(const char *formatting)const
 	return buffer.str();
 }
 
+MSubject::MSubject( const std::string &cont ):std::string(cont) {}
+MSubject::MSubject( std::string &&cont ):std::string(cont){}
+
+NoSubject::NoSubject( const std::string &cont ):std::string(cont) {}
+NoSubject::NoSubject( std::string &&cont ):std::string(cont){}
+
 Message::Message( std::string object, std::string module, std::string file, int line, LogLevel level, std::weak_ptr<MessageHandlerBase> _commitTo )
 	: commitTo( _commitTo ),
 	  m_object( object ),
