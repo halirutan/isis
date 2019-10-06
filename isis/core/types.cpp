@@ -1,129 +1,50 @@
-//
-// C++ Implementation: types
-//
-// Description:
-//
-//
-// Author: Enrico Reimer<reimer@cbs.mpg.de>, (C) 2009
-//
-// Copyright: See COPYING file that comes with this distribution
-//
-//
-
-/// @cond _internal
-
-#ifdef _MSC_VER
-#pragma warning(disable:4800 4996)
-#endif
-
-#include "value.hpp"
-#include "valuearray.hpp"
 #include "types.hpp"
-#include <complex>
-#include <boost/mpl/for_each.hpp>
 
+namespace isis{
+namespace util{
 
-namespace isis
-{
-namespace util
-{
+#define setName(type,name) template<> std::string _internal::name_visitor::operator()<type>(const type&)const{return name;}
 
-/*
- * Define types for the Value<>-System here.
- * There must be a streaming output available for every type used here.
- * template<typename charT, typename traits,typename TYPE > basic_ostream<charT, traits>& operator<<(basic_ostream<charT, traits> &out,const TYPE& s)
- */
+setName( int8_t, "s8bit" );
+setName( uint8_t, "u8bit" );
 
+setName( int16_t, "s16bit" );
+setName( uint16_t, "u16bit" );
 
-#define DEF_TYPE(TYPE,NAME)  \
-	template<> const char Value<TYPE>::m_typeName[]=#NAME
+setName( int32_t, "s32bit" );
+setName( uint32_t, "u32bit" );
 
-DEF_TYPE( bool, boolean );
+setName( int64_t, "s64bit" );
+setName( uint64_t, "u64bit" );
 
-DEF_TYPE( int8_t, s8bit );
-DEF_TYPE( uint8_t, u8bit );
+setName( float, "float" );
+setName( double, "double" );
 
-DEF_TYPE( int16_t, s16bit );
-DEF_TYPE( uint16_t, u16bit );
+setName( color24, "color24" );
+setName( color48, "color48" );
 
-DEF_TYPE( int32_t, s32bit );
-DEF_TYPE( uint32_t, u32bit );
+setName( fvector3, "fvector3" );
+setName( fvector4, "fvector4" );
+setName( dvector3, "dvector3" );
+setName( dvector4, "dvector4" );
+setName( ivector3, "ivector3" );
+setName( ivector4, "ivector4" );
+ 
+setName( ilist, "list<int32_t>" );
+setName( dlist, "list<double>" );
+setName( slist, "list<string>" );
 
-DEF_TYPE( int64_t, s64bit );
-DEF_TYPE( uint64_t, u64bit );
+setName( std::complex<float>, "complex<float>" );
+setName( std::complex<double>, "complex<double>" );
 
-DEF_TYPE( float, float );
-DEF_TYPE( double, double );
+setName( std::string, "string" );
+// setName( Selection, "selection" );
 
-DEF_TYPE( color24, color24 );
-DEF_TYPE( color48, color48 );
+setName( timestamp, "timestamp" );
+setName( duration, "duration" );
+setName( date, "date" );
 
-DEF_TYPE( fvector3, fvector3 );
-DEF_TYPE( fvector4, fvector4 );
-DEF_TYPE( dvector3, dvector3 );
-DEF_TYPE( dvector4, dvector4 );
-DEF_TYPE( ivector3, ivector3 );
-DEF_TYPE( ivector4, ivector4 );
-
-DEF_TYPE( ilist, list<int32_t> );
-DEF_TYPE( dlist, list<double> );
-DEF_TYPE( slist, list<string> );
-
-DEF_TYPE( std::complex<float>, complex<float> );
-DEF_TYPE( std::complex<double>, complex<double> );
-
-DEF_TYPE( std::string, string );
-DEF_TYPE( Selection, selection );
-
-DEF_TYPE( timestamp, timestamp );
-DEF_TYPE( duration, duration );
-DEF_TYPE( date, date );
-
-API_EXCLUDE_BEGIN;
-namespace _internal
-{
-struct type_lister {
-	std::map< unsigned short, std::string > &m_map;
-	bool m_withValues, m_withValueArrays;
-	type_lister( std::map< unsigned short, std::string > &map, bool withValues, bool withValueArrays ): m_map( map ), m_withValues( withValues ), m_withValueArrays( withValueArrays ) {}
-	template<typename SRC> void operator()( SRC ) {//will be called by the mpl::for_each
-		if( m_withValues )m_map.insert( std::make_pair( util::Value<SRC>::staticID(), util::Value<SRC>::staticName() ) );
-
-		if( m_withValueArrays )m_map.insert( std::make_pair( data::ValueArray<SRC>::staticID(), data::ValueArray<SRC>::staticName() ) );
-	}
-};
-
-}
-API_EXCLUDE_END;
-
-std::map< unsigned short, std::string > getTypeMap( bool withValues, bool withValueArrays )
-{
-	std::map< unsigned short, std::string > ret;
-	boost::mpl::for_each<_internal::types>( _internal::type_lister( ret, withValues, withValueArrays ) );
-	return ret;
-}
-
-std::map< std::string, unsigned short > getTransposedTypeMap( bool withValues, bool withValueArrays )
-{
-	typedef std::map< std::string, unsigned short> transposedMapType;
-	typedef std::map< unsigned short, std::string > mapType;
-	transposedMapType ret;
-	for( mapType::const_reference ref : util::getTypeMap( withValues, withValueArrays ) ) {
-		ret[ref.second] = ref.first;
-	}
-	return ret;
-}
+#undef setName
 
 }
 }
-
-isis::util::date& std::operator+=(isis::util::date& x, const isis::util::duration& y)
-{
-	return x+=chrono::duration_cast<chrono::days>(y);
-}
-isis::util::date& std::operator-=(isis::util::date& x, const isis::util::duration& y)
-{
-	return x-=chrono::duration_cast<chrono::days>(y);
-}
-
-/// @endcond

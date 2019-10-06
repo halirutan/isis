@@ -1,276 +1,162 @@
-//
-// C++ Interface: type
-//
-// Description:
-//
-//
-// Author: Enrico Reimer<reimer@cbs.mpg.de>, (C) 2009
-//
-// Copyright: See COPYING file that comes with this distribution
-//
-//
+#ifndef VALUE_HPP
+#define VALUE_HPP
 
-#ifndef ISISTYPE_HPP
-#define ISISTYPE_HPP
+#include <iostream>
+#include <typeindex>
+#include <array>
 
-#include "value_base.hpp"
+#include "types.hpp"
+#include "value_converter.hpp"
 
-#include <string>
-#include <functional>
-#include <boost/mpl/distance.hpp>
-#include <boost/mpl/find.hpp>
-#include <boost/mpl/begin_end.hpp>
-#include <type_traits>
+namespace isis::util{
 
-namespace isis
-{
-namespace util
-{
-
-template<class TYPE > class Value;
-
-API_EXCLUDE_BEGIN;
-/// @cond _internal
-namespace _internal
-{
-
-/**
- * Generic value operation class.
- * This generic class does nothing, and the ()-operator will allways fail with an error send to the debug-logging.
- * It has to be (partly) specialized for the regarding type.
- */
-template<typename OPERATOR,bool modifying,bool enable> struct type_op
-{
-	typedef typename OPERATOR::result_type result_type;
-	typedef std::integral_constant<bool,enable> enabled;
-	typedef typename std::conditional<modifying,util::Value<typename OPERATOR::first_argument_type>,const util::Value<typename OPERATOR::first_argument_type> >::type lhs;
-	
-	result_type operator()( lhs &first, const ValueBase &second )const {
-		LOG( Debug, error ) << "operator " << typeid(OPERATOR).name() << " is not supportet for " << first.getTypeName()  << " and "<< second.getTypeName();
-		throw std::domain_error("operation not available");
-	}
+namespace _internal{
+template<typename charT, typename traits> struct print_visitor{
+    std::basic_ostream<charT, traits> &out;
+    template<typename T> void operator()(const T &v){
+        out << v;
+    }
 };
-
-/**
- * Half-generic value operation class.
- * This generic class does math operations on Values by converting the second Value-object to the type of the first Value-object. Then:
- * - if the conversion was successfull (the second value can be represented in the type of the first) the "inRange"-operation is used
- * - if the conversion failed with an positive or negative overflow (the second value is to high/low to fit into the type of the first) a info sent to the debug-logging and the posOverflow/negOverflow operation is used
- * - if there is no known conversion from second to first an error is sent to the debug-logging and std::domain_error is thrown.
- * \note The functions (posOverflow,negOverflow) here are only stubs and will allways throw std::domain_error.
- * \note inRange will return OPERATOR()(first,second)
- * These class can be further specialized for the regarding operation.
- */
-template<typename OPERATOR,bool modifying> struct type_op<OPERATOR,modifying,true>
-{
-    virtual ~type_op(){}
-	typedef typename std::conditional<modifying,util::Value<typename OPERATOR::first_argument_type>,const util::Value<typename OPERATOR::first_argument_type> >::type lhs;
-	typedef typename util::Value<typename OPERATOR::second_argument_type> rhs;
-	typedef typename OPERATOR::result_type result_type;
-	typedef std::integral_constant<bool,true> enabled;
-	
-	virtual result_type posOverflow()const {throw std::domain_error("positive overflow");}
-	virtual result_type negOverflow()const {throw std::domain_error("negative overflow");}
-	virtual result_type inRange( lhs &first, const rhs &second )const {
-		return OPERATOR()(first,second);
-	} 
-	result_type operator()(lhs &first, const ValueBase &second )const {
-		// ask second for a converter from itself to Value<T>
-		const ValueBase::Converter conv = second.getConverterTo( rhs::staticID() );
-		
-		if ( conv ) {
-			//try to convert second into T and handle results
-			rhs buff;
-			
-			switch ( conv->convert( second, buff ) ) {
-				case boost::numeric::cPosOverflow:return posOverflow();
-				case boost::numeric::cNegOverflow:return negOverflow();
-				case boost::numeric::cInRange:
-					LOG_IF(second.isFloat() && second.as<float>()!=static_cast<ValueBase&>(buff).as<float>(), Debug,warning) //we can't really use Value<T> yet, so make it ValueBase
-					<< "Using " << second.toString( true ) << " as " << buff.toString( true ) << " for operation on " << first.toString( true )
-					<< " you might loose precision";
-					return inRange( first, buff );
-			}
-		}
-		throw std::domain_error(rhs::staticName()+" not convertible to "+second.getTypeName());
-	}
-};
-
-// compare operators (overflows are no error here)
-template<typename OPERATOR,bool enable> struct type_comp_base : type_op<OPERATOR,false,enable>{
-	typename OPERATOR::result_type posOverflow()const {return false;}
-	typename OPERATOR::result_type negOverflow()const {return false;}
-};
-template<typename T> struct type_eq   : type_comp_base<std::equal_to<T>,true>{};
-template<typename T> struct type_less : type_comp_base<std::less<T>,    has_op<T>::lt>
-{
-	//getting a positive overflow when trying to convert second into T, obviously means first is less 
-	typename std::less<T>::result_type posOverflow()const {return true;}
-};
-template<typename T> struct type_greater : type_comp_base<std::greater<T>,has_op<T>::gt>
-{
-	//getting an negative overflow when trying to convert second into T, obviously means first is greater
-	typename std::greater<T>::result_type negOverflow()const {return true;}
-};
-
-// on-self operations .. we return void because the result won't be used anyway
-template<typename OP> struct op_base : std::binary_function <typename OP::first_argument_type,typename OP::second_argument_type,void>{};
-template<typename T> struct plus_op :  op_base<std::plus<T> >      {void operator() (typename std::plus<T>::first_argument_type& x,       typename std::plus<T>::second_argument_type const& y)       const {x+=y;}};
-template<typename T> struct minus_op : op_base<std::minus<T> >     {void operator() (typename std::minus<T>::first_argument_type& x,      typename std::minus<T>::second_argument_type const& y)      const {x-=y;}};
-template<typename T> struct mult_op :  op_base<std::multiplies<T> >{void operator() (typename std::multiplies<T>::first_argument_type& x, typename std::multiplies<T>::second_argument_type const& y) const {x*=y;}};
-template<typename T> struct div_op :   op_base<std::divides<T> >   {void operator() (typename std::divides<T>::first_argument_type& x,    typename std::divides<T>::second_argument_type const& y)    const {x/=y;}};
-
-template<typename T> struct type_plus :  type_op<plus_op<T>,true, has_op<T>::plus>{};
-template<typename T> struct type_minus : type_op<minus_op<T>,true,has_op<T>::minus>{};
-template<typename T> struct type_mult :  type_op<mult_op<T>,true, has_op<T>::mult>{};
-template<typename T> struct type_div :   type_op<div_op<T>,true,  has_op<T>::div>{};
-
 }
-/// @endcond _internal
-API_EXCLUDE_END;
 
-/**
- * Generic class for type aware variables.
- * This generic approach makes it possible to handle all the types of Properties for the different
- * data these library can handle. On the other side it's more complex to read and write with these kind of types.
- * \note For supported types see types.hpp
- * \note For type conversion see type_converter.cpp
- */
-
-template<typename TYPE> class Value: public ValueBase
-{
-	TYPE m_val;
-	static const char m_typeName[];
-	template<typename OP, typename RET> RET operatorWrapper(const OP& op,const ValueBase &rhs,const RET &default_ret)const{
-		try{
-			return op(*this,rhs);
-		} catch(const std::domain_error &e){ // return default value on failure
-			LOG(Runtime,error) << "Operation " << MSubject( typeid(OP).name() ) << " on " << MSubject( getTypeName() ) << " and " << MSubject( rhs.getTypeName() ) << " failed with \"" << e.what()
-			<< "\", will return " << MSubject( Value<RET>(default_ret).toString(true) );
-		return default_ret;
-		}
-	}
-	template<typename OP> ValueBase& operatorWrapper_me(const OP& op,const ValueBase &rhs){
-		try{
-			op(*this,rhs);
-		} catch(const std::domain_error &e){
-			LOG(Runtime,error) << "Operation " << MSubject( typeid(OP).name() ) << " on " << MSubject( getTypeName() ) << " and " << MSubject( rhs.getTypeName() ) << " failed with \"" << e.what()
-			<< "\", wont change value (" << MSubject( this->toString(true) ) << ")";
-		} 
-		return *this;
-	}
-protected:
-	ValueBase *clone() const {
-		return new Value<TYPE>( *this );
-	}
+class ValueNew:public ValueTypes{
+	static const _internal::ValueConverterMap &converters();
 public:
-	constexpr static unsigned short staticID(){
-		return boost::mpl::distance <
-			boost::mpl::begin<_internal::types>::type,
-			typename boost::mpl::find<_internal::types, TYPE>::type
-		>::type::value+1;
-	}
-	Value(): m_val() {
-		checkType<TYPE>();
-		static_assert(!std::is_const<TYPE>::value,"Value type must not be const");
-		static_assert( staticID() < 0xFF, "This is not a value type" );
-	}
-	/**
-	 * Create a Value from any type.
-	 * If the type of the parameter is not the same as the content type of the object, the system tries to do a lexical cast.
-	 * - The lexical cast is _not_ a conversion so no rounding or range check is done
-	 * - _All_ types which can be lexically casted are allowed, not only types known to isis. But not all types will work.
-	 * - If the lexical cast fails, boost::bad_lexical_cast is thrown.
-	 */
-	template<typename T> Value( const T &value ) {
-		m_val = _internal::__cast_to<TYPE>()( this, value );
-		checkType<TYPE>();
-		static_assert(!std::is_const<TYPE>::value,"Value type cannot be const");
-		static_assert( staticID() < 0xFF, "This is not a value type" );
+	typedef _internal::ValueConverterMap::mapped_type::mapped_type Converter;
+    
+	template<int I> using TypeByIndex = typename std::variant_alternative<I, ValueTypes>::type;
+
+    ValueNew(const ValueTypes &v);
+    ValueNew(ValueTypes &&v);
+	template<typename T> ValueNew& operator=(const T& v){ValueTypes::operator=(v);return *this;}
+	template<typename T> ValueNew& operator=(T&& v){ValueTypes::operator=(v);return *this;}
+	ValueNew();
+    std::string typeName()const{
+        return std::visit(_internal::name_visitor(),static_cast<const ValueTypes&>(*this));
+    }
+    template<typename T> static std::string staticName(){
+        return std::visit(_internal::name_visitor(),ValueTypes(T()));
+    }
+    template<typename T> static constexpr std::size_t staticIndex(){
+        return ValueTypes(T()).index();
+    }
+
+	template<typename charT, typename traits>
+    std::ostream &print(bool with_typename=true,std::basic_ostream<charT, traits> &out=std::cout)const{
+		std::visit(_internal::print_visitor<charT,traits>{out},static_cast<const ValueTypes&>(*this));
+		if(with_typename)
+			out << "(" << typeName() << ")";
+		return out;
 	}
 
-	std::string getTypeName()const {return staticName();}
-	unsigned short getTypeID()const {return staticID();}
-	bool isFloat() const {return std::is_floating_point< TYPE >::value;}
-	bool isInteger() const {return std::is_integral< TYPE >::value;}
-
-	/// \returns true if and only if this and second do contain the same value of the same type
-	virtual bool operator==( const ValueBase &second )const {
-		if ( second.is<TYPE>() ) {
-			return m_val == second.castTo<TYPE>();
-		} else
-			return  false;
+	/// \return true if the stored type is T
+	template<typename T> bool is()const{
+		return std::holds_alternative<T>(*this);
 	}
 
-	/// \returns the name of the type
-	static std::string staticName() {return m_typeName;}
+	const Converter &getConverterTo( unsigned short ID )const;
+
+    std::string toString(bool with_typename=true)const;
+
+	/// creates a copy of the stored value using a type referenced by its ID
+	ValueNew copyByID( unsigned short ID ) const;
 
 	/**
-	 * Implicit conversion of Value to its value type.
-	 * Only the actual type is allowed.
-	 * However, the following is valid:
-	 * \code
-	 * Value<int> i(5);
-	 * float f=i;
-	 * \endcode
-	 * In this case the function returns int which is then also implicitely converted to float.
-	 * \return a const reference to the stored value
+	 * Check if the stored value would also fit into another type referenced by its ID
+	 * \returns true if the stored value would fit into the target type, false otherwise
 	 */
-	operator const TYPE &()const {return m_val;}
+	bool fitsInto( unsigned short ID ) const;
 
 	/**
-	 * Implicit conversion of Value to its value type.
-	 * Only the actual type is allowed.
-	 * However, the following is valid:
-	 * \code
-	 * Value<int> i(5);
-	 * float f=i;
-	 * \endcode
-	 * In this case the function returns int which is then also implicitely converted to float.
-	 * \return a reference to the stored value
+	 * Convert the content of one Value to another.
+	 * This will use the automatic conversion system to transform the value one Value-Object into another.
+	 * The types of both objects can be unknown.
+	 * \param from the Value-object containing the value which should be converted
+	 * \param to the Value-object which will contain the converted value if conversion was successfull
+	 * \returns false if the conversion failed for any reason, true otherwise
 	 */
-	operator TYPE &() {return m_val;}
+	static bool convert( const ValueNew &from, ValueNew &to );
 
-	bool gt( const ValueBase &ref )const {return operatorWrapper(_internal::type_greater<TYPE>(),ref,false );}
-	bool lt( const ValueBase &ref )const {return operatorWrapper(_internal::type_less<TYPE>(),   ref,false );}
-	bool eq( const ValueBase &ref )const {return operatorWrapper(_internal::type_eq<TYPE>(),     ref, false );}
+	/**
+	* Interpret the value as value of any (other) type.
+	* This is a runtime-based cast via automatic conversion.
+	* \code
+	* ValueBase *mephisto=new Value<std::string>("666");
+	* int devil=mephisto->as<int>();
+	* \endcode
+	* If you know the type of source and destination at compile time you should use Value\<DEST_TYPE\>((SOURCE_TYPE)src).
+	* \code
+	* Value<std::string> mephisto("666");
+	* Value<int> devil((std::string)mephisto);
+	* \endcode
+	* \return this value converted to the requested type if conversion was successfull.
+	*/
+	template<class T> T as()const {
+		if( is<T>() )
+			return std::get<T>(*this);
 
-	ValueBase& add( const ValueBase &ref )        {return operatorWrapper_me(_internal::type_plus<TYPE>(), ref );}
-	ValueBase& substract( const ValueBase &ref )  {return operatorWrapper_me(_internal::type_minus<TYPE>(),ref );}
-	ValueBase& multiply_me( const ValueBase &ref ){return operatorWrapper_me(_internal::type_mult<TYPE>(), ref );}
-	ValueBase& divide_me( const ValueBase &ref )  {return operatorWrapper_me(_internal::type_div<TYPE>(),  ref);}
+		try{
+			ValueNew ret = copyByID( ValueNew::staticIndex<T>() );
+			return std::get<T>(ret);
+		} catch(...) {//@todo specify exception
+			LOG( Debug, error )
+					<< "Interpretation of " << toString( true ) << " as " << Value<T>::staticName()
+					<< " failed. Returning " << Value<T>().toString() << ".";
+			return T();
+		} 
+	}
 	
-	virtual ~Value() {}
+	/**
+	 * Check if the this value is greater to another value converted to this values type.
+	 * The function tries to convert ref to the type of this and compares the result.
+	 * If there is no conversion an error is send to the debug logging, and false is returned.
+	 * \retval value_of_this>converted_value_of_ref if the conversion was successfull
+	 * \retval true if the conversion failed because the value of ref was to low for TYPE (negative overflow)
+	 * \retval false if the conversion failed because the value of ref was to high for TYPE (positive overflow)
+	 * \retval false if there is no know conversion from ref to TYPE
+	 */
+	bool gt( const ValueNew &ref )const;
+
+	/**
+	 * Check if the this value is less than another value converted to this values type.
+	 * The funkcion tries to convert ref to the type of this and compare the result.
+	 * If there is no conversion an error is send to the debug logging, and false is returned.
+	 * \retval value_of_this<converted_value_of_ref if the conversion was successfull
+	 * \retval false if the conversion failed because the value of ref was to low for TYPE (negative overflow)
+	 * \retval true if the conversion failed because the value of ref was to high for TYPE (positive overflow)
+	 * \retval false if there is no know conversion from ref to TYPE
+	 */
+	bool lt( const ValueNew &ref )const;
+
+	/**
+	 * Check if the this value is equal to another value converted to this values type.
+	 * The funktion tries to convert ref to the type of this and compare the result.
+	 * If there is no conversion an error is send to the debug logging, and false is returned.
+	 * \retval value_of_this==converted_value_of_ref if the conversion was successfull
+	 * \retval false if the conversion failed because the value of ref was to low for TYPE (negative overflow)
+	 * \retval false if the conversion failed because the value of ref was to high for TYPE (positive overflow)
+	 * \retval false if there is no known conversion from ref to TYPE
+	 */
+	bool eq( const ValueNew &ref )const;
+
+	ValueNew& plus( const ValueNew &ref )const;
+	ValueNew& minus( const ValueNew &ref )const;
+	ValueNew& multiply( const ValueNew &ref )const;
+	ValueNew& divide( const ValueNew &ref )const;
+
 };
 
-template<typename T> const util::Value<T>& ValueBase::castToType() const
-{
-	checkType<T>();
-	return m_cast_to<util::Value<T> >();
-}
-template<typename T> const T &ValueBase::castTo() const
-{
-	const util::Value<T> &ret = castToType<T>();
-	return ret.operator const T & ();
-}
-template<typename T> util::Value<T>& ValueBase::castToType()
-{
-	checkType<T>();
-	return m_cast_to<util::Value<T> >();
-}
-template<typename T> T &ValueBase::castTo()
-{
-	util::Value<T> &ret = castToType<T>();
-	return ret.operator T & ();
 }
 
-template<typename T> bool ValueBase::is()const
+namespace std
 {
-	checkType<T>();
-	return getTypeID() == util::Value<T>::staticID();
-}
-
+/// Streaming output for Chunk (forward to PropertyMap)
+template<typename charT, typename traits>
+basic_ostream<charT, traits>& operator<<( basic_ostream<charT, traits> &out, const isis::util::ValueNew &s )
+{
+	return s.print(true,out);
 }
 }
 
-#endif //DATATYPE_INC
+
+#endif // VALUE_HPP

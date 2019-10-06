@@ -1,29 +1,18 @@
-#ifndef TYPES_HPP_INCLUDED
-#define TYPES_HPP_INCLUDED
+#ifndef VALUETYPES_HPP
+#define VALUETYPES_HPP
 
-#include <boost/mpl/vector/vector30.hpp>
-#include <boost/mpl/contains.hpp>
-
-#ifndef _MSC_VER
-#include <stdint.h>
-#endif
-
-#include "vector.hpp"
-#include "color.hpp"
-#include "selection.hpp"
-
+#include <variant>
 #include <complex>
-#include <chrono>
+#include "color.hpp"
+#include "vector.hpp"
+#include "selection.hpp"
 #include <iomanip>
 
 namespace std{namespace chrono{
 typedef duration<int32_t,ratio<int(3600*24)> > days;  
 }}
 
-namespace isis
-{
-namespace util
-{
+namespace isis::util{
 
 typedef std::list<int32_t> ilist;
 typedef std::list<double> dlist;
@@ -32,24 +21,26 @@ typedef std::chrono::time_point<std::chrono::system_clock,std::chrono::milliseco
 typedef std::chrono::time_point<std::chrono::system_clock,std::chrono::days> date;
 typedef timestamp::duration duration; // @todo float duration might be nice
 
-/// @cond _internal
-namespace _internal
-{
+typedef std::variant<
+bool
+, int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t, int64_t, uint64_t
+, float, double
+, color24, color48
+, fvector3, dvector3, ivector3
+, fvector4, dvector4, ivector4
+, ilist, dlist, slist
+, std::string, isis::util::Selection
+, std::complex<float>, std::complex<double>
+, date, timestamp, duration
+> ValueTypes;
 
-/// the supported types as mpl-vector
-typedef boost::mpl::vector29 < //increase this if a type is added (if >30 consider including vector40 above)
-bool //1
-, int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t, int64_t, uint64_t // 9
-, float, double // 11
-, color24, color48 // 13
-, fvector3, dvector3, ivector3 // 16
-, fvector4, dvector4, ivector4 // 19
-, ilist, dlist, slist // 22
-, std::string, isis::util::Selection //24
-, std::complex<float>, std::complex<double> //26
-, date, timestamp, duration //29
-> types;
 
+namespace _internal{
+struct name_visitor{
+    template<typename T> std::string operator()(const T &)const{
+        return std::string("unnamed_")+typeid(T).name();
+    }
+};
 template<bool ENABLED> struct ordered{
 	static const bool lt=ENABLED,gt=ENABLED;
 };
@@ -60,20 +51,13 @@ template<bool ENABLED> struct additive{
 	static const bool plus=ENABLED,minus=ENABLED,negate=ENABLED;
 };
 }
-/// @endcond
 
 /**
  * resolves to boost::true_type if type is known, boost::false_type if not
  */
-template< typename T > struct knowType :  boost::mpl::contains<_internal::types, T> {};
-/**
- * Templated pseudo struct to check for availability of a type at compile time.
- * Instanciating this with any datatype (eg: checkType\<short\>() ) will cause the
- * compiler to raise an error if this datatype is not in the list of the supported types.
- */
-template< typename T > struct checkType {
-	static_assert(knowType<T>::value, "type not in list of known types");
-};
+template< typename T > constexpr bool knownType(){ //@todo can we get rid of this?
+	return std::holds_alternative<T>(ValueTypes());
+}
 
 /**
  * Templated pseudo struct to check if a type supports an operation at compile time.
@@ -87,9 +71,9 @@ template< typename T > struct checkType {
  * - \c \b negate negation is applicable
  */
 template<typename T> struct has_op:
-	_internal::ordered<knowType<T>::value>,
-	_internal::additive<knowType<T>::value>,
-	_internal::multiplicative<knowType<T>::value>
+	_internal::ordered<knownType<T>()>,
+	_internal::additive<knownType<T>()>,
+	_internal::multiplicative<knownType<T>()>
 	{};
 
 /// @cond _internal
@@ -125,9 +109,7 @@ std::map<unsigned short, std::string> getTypeMap( bool withValues = true, bool w
  * \returns a map, mapping util::Value::staticName and data::ValueArray::staticName to util::Value::staticID() and data::ValueArray::staticID()
  */
 std::map< std::string, unsigned short> getTransposedTypeMap( bool withValues = true, bool withValueArrays = true );
-template<class TYPE >
-class Value;
-}
+
 }
 
 // define +/- operations for timestamp and date
@@ -194,4 +176,4 @@ namespace std{
 	}
 }
 
-#endif //TYPES_HPP_INCLUDED
+#endif // VALUETYPES_HPP
