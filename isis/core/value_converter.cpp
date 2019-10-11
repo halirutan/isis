@@ -62,11 +62,11 @@ template<typename T_DUR> bool parseTimeString(const std::string &src, const char
 template<typename SRC, typename DST> class ValueGenerator: public ValueConverterBase
 {
 public:
-	void create( ValueNew& dst )const override {
-		dst=ValueNew(DST());
+	ValueNew create()const override {
+		return DST();
 	}
 	boost::numeric::range_check_result generate( const ValueNew &src, ValueNew& dst )const override {
-		create( dst );
+		dst=create();
 		std::holds_alternative<DST>(dst);
 		const boost::numeric::range_check_result result = convert( src, dst );
 		return result;

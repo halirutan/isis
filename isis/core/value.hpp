@@ -31,9 +31,7 @@ public:
 	template<typename T> ValueNew& operator=(const T& v){ValueTypes::operator=(v);return *this;}
 	template<typename T> ValueNew& operator=(T&& v){ValueTypes::operator=(v);return *this;}
 	ValueNew();
-    std::string typeName()const{
-        return std::visit(_internal::name_visitor(),static_cast<const ValueTypes&>(*this));
-    }
+    std::string typeName()const;
     template<typename T> static std::string staticName(){
         return std::visit(_internal::name_visitor(),ValueTypes(T()));
     }
@@ -60,6 +58,9 @@ public:
 
 	/// creates a copy of the stored value using a type referenced by its ID
 	ValueNew copyByID( unsigned short ID ) const;
+
+	/// creates a default constructed value using a type referenced by its ID
+	static ValueNew createByID( unsigned short ID );
 
 	/**
 	 * Check if the stored value would also fit into another type referenced by its ID
@@ -101,7 +102,7 @@ public:
 		} catch(...) {//@todo specify exception
 			LOG( Debug, error )
 					<< "Interpretation of " << toString( true ) << " as " << Value<T>::staticName()
-					<< " failed. Returning " << Value<T>().toString() << ".";
+					<< " failed. Returning " << ValueNew(T()).toString() << ".";
 			return T();
 		} 
 	}
