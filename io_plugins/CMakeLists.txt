@@ -17,7 +17,7 @@ set_directory_properties(PROPERTIES INCLUDE_DIRECTORIES ${CMAKE_SOURCE_DIR})
 # add global options
 ############################################################
 option(ISIS_IOPLUGIN_NIFTI_SA "Enable standalone Nifti-IO plugin" ON)
-option(ISIS_IOPLUGIN_TIFF_SA "Enable standalone TIFF-IO plugin" ON)
+option(ISIS_IOPLUGIN_TIFF_SA "Enable standalone TIFF-IO plugin" OFF)
 option(ISIS_IOPLUGIN_ZISRAW "Enable standalone Zeiss Integrated Software RAW plugin" OFF)
 option(ISIS_IOPLUGIN_MEAS "Enable standalone plugin for reading siemens RAW data files" OFF)
 option(ISIS_IOPLUGIN_ORTHANC "Enable standalone plugin for reading siemens RAW data files" OFF)
@@ -31,6 +31,8 @@ option(ISIS_IOPLUGIN_TAR "Enable proxy plugin for reading tar archives" ON)
 option(ISIS_IOPLUGIN_FDF "Enable plugin for reading fdf files" ON)
 option(ISIS_IOPLUGIN_FLIST "Enable proxy plugin which gets filenames from a file or stdin" ON)
 option(ISIS_IOPLUGIN_SIEMENSTCPIP "Enable plugin for Siemens data coming on TCP Port" OFF)
+
+include_directories(${Boost_INCLUDE_DIRS})
 
 ############################################################
 # the plugins ...

@@ -97,13 +97,12 @@ endif(ISIS_DEBUG_LOG)
 # since ISIS stongly depends on the boost libraries we will configure them
 # globally.
 if(BUILD_TESTING)
-	find_package(Boost REQUIRED COMPONENTS filesystem system iostreams unit_test_framework)
+	find_package(Boost 1.71 REQUIRED COMPONENTS filesystem system iostreams unit_test_framework)
 else(BUILD_TESTING)
-	find_package(Boost REQUIRED COMPONENTS filesystem system iostreams)
+	find_package(Boost 1.71 REQUIRED COMPONENTS filesystem system iostreams)
 endif(BUILD_TESTING)
 
-include_directories(${Boost_INCLUDE_DIR})
-
+include_directories(${Boost_INCLUDE_DIRS})
 ############################################################
 # Macro to generate manpages for CLI programms
 ############################################################

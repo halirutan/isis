@@ -2,6 +2,7 @@
 # find and configure the isis core library
 ###########################################################
 set_directory_properties(PROPERTIES INCLUDE_DIRECTORIES ${CMAKE_SOURCE_DIR})
+include_directories(${Boost_INCLUDE_DIRS})
 
 ############################################################
 # configure the targets

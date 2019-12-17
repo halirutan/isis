@@ -388,7 +388,13 @@ namespace std
 	{
 		return out<<s.toString(true);
 	}
-	template<> void swap<isis::util::PropertyValue>(isis::util::PropertyValue &a,isis::util::PropertyValue &b);
+	// The next line is commented out due to a linker error on MacOSX
+	// Undefined symbols for architecture x86_64:
+    //  "std::__1::enable_if<(is_move_constructible<isis::util::PropertyValue>::value) && (is_move_assignable<isis::util::PropertyValue>::value), void>::type swap<isis::util::PropertyValue>(isis::util::PropertyValue&, isis::util::PropertyValue&)", referenced from:
+    //      void boost_move_adl_swap::swap_proxy<isis::util::PropertyValue>(isis::util::PropertyValue&, isis::util::PropertyValue&) in propmap.cpp.o
+    //ld: symbol(s) not found for architecture x86_64
+
+	//template<> void swap<isis::util::PropertyValue>(isis::util::PropertyValue &a,isis::util::PropertyValue &b);
 	template<> struct less<isis::util::PropertyValue> : binary_function <isis::util::PropertyValue,isis::util::PropertyValue,bool> {
 		bool operator() (const isis::util::PropertyValue& x, const isis::util::PropertyValue& y) const;
 	};

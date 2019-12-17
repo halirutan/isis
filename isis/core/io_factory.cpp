@@ -397,7 +397,7 @@ std::list<Chunk> isis::data::IOFactory::loadPath(const boost::filesystem::path& 
 		m_feedback->show( length, std::string( "Reading " ) + util::Value<std::string>( length ).toString( false ) + " files from " + path.native() );
 	}
 	
-	rlimit rlim;
+	rlimit rlim{};
 	size_t open_files = io_formats.size() + length + 50; //just guessing todo find a way to get the actual amount of open files
 	bool no_mapping=false;
 	getrlimit(RLIMIT_NOFILE, &rlim);
